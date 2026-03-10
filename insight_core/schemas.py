@@ -101,6 +101,24 @@ class ProblemScope(str, Enum):
     GLOBAL = "global"
 
 
+class EvidenceDensity(str, Enum):
+    """証拠密度."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class PersonaRole(str, Enum):
+    """Persona役割."""
+
+    EVIDENCE_CHECKER = "evidence_checker"
+    HYPOTHESIS_REFINER = "hypothesis_refiner"
+    OPERATIONAL_RISK_REVIEWER = "operational_risk_reviewer"
+    STRUCTURAL_ABSTRACTION = "structural_abstraction"
+    NOVELTY_PROBE = "novelty_probe"
+
+
 # ============================================================================
 # Source Interfaces
 # ============================================================================
@@ -323,6 +341,9 @@ class Options(BaseModel):
 
     include_source_units: bool = False
     include_intermediate_items: bool = False
+    checkpoint_path: str | None = None
+    resume: bool = False
+    max_concurrency: int = 4
 
 
 # ============================================================================
@@ -374,6 +395,46 @@ class RunInfo(BaseModel):
 
 
 # ============================================================================
+# Routing Interfaces
+# ============================================================================
+
+
+class RoutingPlan(BaseModel):
+    """Personaルーティング計画."""
+
+    lead_persona: str
+    problem_type: str | None = None
+    evidence_density: EvidenceDensity | None = None
+    selected_personas: list[str] = Field(min_length=1)
+    skipped_personas: list[str] = Field(default_factory=list)
+    role_assignments: dict[str, PersonaRole] = Field(default_factory=dict)
+    routing_reason: list[str] = Field(min_length=1)
+    skip_reasons: dict[str, str] = Field(default_factory=dict)
+    routing_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class RoutingRules(BaseModel):
+    """ルーティングルール（問題タイプ別）."""
+
+    preferred: list[str] = Field(default_factory=list)
+    optional: list[str] = Field(default_factory=list)
+
+
+class RoutingConfig(BaseModel):
+    """ルーティング設定."""
+
+    enabled: bool = True
+    lead_persona: str = "bright_generalist"
+    lead_persona_mutable: bool = True
+    fallback_personas: list[str] = Field(default_factory=lambda: ["data_researcher", "operator"])
+    mandatory_audit_personas: list[str] = Field(default_factory=lambda: ["data_researcher"])
+    max_personas_by_evidence_density: dict[str, int] = Field(
+        default_factory=lambda: {"low": 3, "medium": 4, "high": 6}
+    )
+    routing_rules: dict[str, RoutingRules] = Field(default_factory=dict)
+
+
+# ============================================================================
 # Response Interface
 # ============================================================================
 
@@ -392,6 +453,7 @@ class InsightResponse(BaseModel):
     failures: list[FailureItem] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
     source_units: list[SourceUnit] = Field(default_factory=list)
+    routing_plan: RoutingPlan | None = None
 
 
 # ============================================================================
@@ -420,3 +482,4 @@ class PersonaRegistry(BaseModel):
     persona_source: PersonaSource
     catalog_version: str | None = None
     primary_persona_id: str | None = None
+

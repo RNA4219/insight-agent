@@ -9,6 +9,7 @@ Responsible for:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from insight_core.llm_client import LLMClient
@@ -20,7 +21,6 @@ from insight_core.schemas import (
 )
 
 
-# Default axis names for scoring
 DEFAULT_AXES = [
     "evidence_grounding",
     "novelty",
@@ -37,15 +37,7 @@ def build_evaluation_prompt(
     candidate: ProblemCandidateItem,
     persona: PersonaDefinition,
 ) -> tuple[str, str]:
-    """Build prompt for persona-based evaluation.
-
-    Args:
-        candidate: Problem candidate to evaluate.
-        persona: Persona definition for evaluation.
-
-    Returns:
-        Tuple of (system_prompt, user_prompt).
-    """
+    """Build prompt for persona-based evaluation."""
     system_prompt = f"""あなたは「{persona.name}」という視点で課題候補を評価する専門家です。
 
 ## あなたの役割
@@ -139,40 +131,23 @@ def parse_evaluation_response(
     persona: PersonaDefinition,
     normalized_weight: float,
 ) -> PersonaScore:
-    """Parse LLM evaluation response into PersonaScore.
-
-    Args:
-        response: Parsed JSON response from LLM.
-        persona: Persona that performed evaluation.
-        normalized_weight: Normalized weight for this persona.
-
-    Returns:
-        PersonaScore object.
-    """
+    """Parse LLM evaluation response into PersonaScore."""
     axis_scores = response.get("axis_scores", {})
     reason_summary = response.get("reason_summary")
 
-    # Parse decision
     try:
         decision = Decision(response.get("decision", "reserve"))
     except ValueError:
         decision = Decision.RESERVE
 
-    # Calculate weighted score
-    # Prioritize axes that match persona's priorities
     if axis_scores:
         total_score = sum(axis_scores.values())
         avg_score = total_score / len(axis_scores) if axis_scores else 0.5
-
-        # Boost score for priority axes
-        priority_boost = 0.0
         if persona.priorities:
             priority_scores = [axis_scores.get(p, 0.5) for p in persona.priorities if p in axis_scores]
             if priority_scores:
                 priority_avg = sum(priority_scores) / len(priority_scores)
-                # Weighted average: 70% priority axes, 30% overall
                 avg_score = (priority_avg * 0.7) + (avg_score * 0.3)
-
         weighted_score = min(1.0, max(0.0, avg_score))
     else:
         weighted_score = 0.5
@@ -187,39 +162,29 @@ def parse_evaluation_response(
     )
 
 
-def evaluate_candidate(
+async def evaluate_candidate_async(
     candidate: ProblemCandidateItem,
     personas: list[PersonaDefinition],
     llm: LLMClient,
+    max_concurrency: int = 4,
 ) -> list[PersonaScore]:
-    """Evaluate a problem candidate with all personas.
-
-    Args:
-        candidate: Problem candidate to evaluate.
-        personas: List of personas to evaluate with.
-        llm: LLM client instance.
-
-    Returns:
-        List of PersonaScore objects.
-    """
-    # Normalize weights
+    """Evaluate a problem candidate with all personas in parallel."""
     total_weight = sum(p.weight for p in personas)
     normalized_weights = {p.persona_id: p.weight / total_weight for p in personas}
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
-    scores: list[PersonaScore] = []
-
-    for persona in personas:
-        try:
-            system_prompt, user_prompt = build_evaluation_prompt(candidate, persona)
-            response = llm.complete_json(system_prompt, user_prompt)
-            score = parse_evaluation_response(
-                response, persona, normalized_weights[persona.persona_id]
-            )
-            scores.append(score)
-        except Exception:
-            # On failure, add a default reserved score
-            scores.append(
-                PersonaScore(
+    async def run_for_persona(index: int, persona: PersonaDefinition):
+        async with semaphore:
+            try:
+                system_prompt, user_prompt = build_evaluation_prompt(candidate, persona)
+                response = await llm.complete_json_async(system_prompt, user_prompt)
+                score = parse_evaluation_response(
+                    response,
+                    persona,
+                    normalized_weights[persona.persona_id],
+                )
+            except Exception:
+                score = PersonaScore(
                     persona_id=persona.persona_id,
                     axis_scores={},
                     weighted_score=0.5,
@@ -227,65 +192,78 @@ def evaluate_candidate(
                     decision=Decision.RESERVE,
                     reason_summary="評価エラーのため保留",
                 )
-            )
+            return index, score
 
-    return scores
+    tasks = [asyncio.create_task(run_for_persona(index, persona)) for index, persona in enumerate(personas)]
+    scores = await asyncio.gather(*tasks)
+    scores.sort(key=lambda item: item[0])
+    return [score for _, score in scores]
+
+
+def evaluate_candidate(
+    candidate: ProblemCandidateItem,
+    personas: list[PersonaDefinition],
+    llm: LLMClient,
+    max_concurrency: int = 4,
+) -> list[PersonaScore]:
+    """Sync wrapper for candidate evaluation."""
+    return asyncio.run(evaluate_candidate_async(candidate, personas, llm, max_concurrency))
 
 
 def compute_integrated_decision(
     scores: list[PersonaScore],
     primary_persona_id: str | None = None,
 ) -> Decision:
-    """Compute integrated decision from persona scores.
-
-    Rules:
-    - If data_researcher or operator rejects on feasibility/evidence/maintainability, overall reject
-    - If primary_persona is set, prioritize their decision
-    - Otherwise, use weighted voting
-
-    Args:
-        scores: List of persona scores.
-        primary_persona_id: Optional primary persona ID.
-
-    Returns:
-        Integrated decision.
-    """
+    """Compute integrated decision from persona scores."""
     if not scores:
         return Decision.RESERVE
 
-    # Check for critical rejectors
     critical_personas = {"data_researcher", "operator"}
     for score in scores:
         if score.persona_id in critical_personas and score.decision == Decision.REJECT:
-            # Check if rejection is on critical axes
             axis_scores = score.axis_scores
             if axis_scores:
                 critical_axes = ["evidence_grounding", "feasibility", "maintainability"]
                 if any(axis_scores.get(ax, 1.0) < 0.4 for ax in critical_axes):
                     return Decision.REJECT
 
-    # Check primary persona decision
     if primary_persona_id:
         for score in scores:
             if score.persona_id == primary_persona_id:
                 if score.decision == Decision.REJECT:
                     return Decision.REJECT
-                elif score.decision == Decision.ACCEPT:
-                    # Primary accepts, but still check others
-                    pass
+                if score.decision == Decision.ACCEPT:
+                    break
 
-    # Weighted voting
     accept_weight = sum(s.applied_weight for s in scores if s.decision == Decision.ACCEPT)
     reject_weight = sum(s.applied_weight for s in scores if s.decision == Decision.REJECT)
 
     if accept_weight > 0.5:
         return Decision.ACCEPT
-    elif reject_weight > 0.5:
+    if reject_weight > 0.5:
         return Decision.REJECT
-    elif any(s.decision == Decision.NEEDS_MORE_EVIDENCE for s in scores):
+    if any(s.decision == Decision.NEEDS_MORE_EVIDENCE for s in scores):
         return Decision.NEEDS_MORE_EVIDENCE
-    else:
-        return Decision.RESERVE
+    return Decision.RESERVE
+
+
+async def evaluate_candidates_async(
+    candidates: list[ProblemCandidateItem],
+    personas: list[PersonaDefinition],
+    llm: LLMClient,
+    primary_persona_id: str | None = None,
+    max_concurrency: int = 4,
+) -> list[ProblemCandidateItem]:
+    """Evaluate all problem candidates with personas."""
+    if not candidates or not personas:
+        return candidates
+
+    for candidate in candidates:
+        scores = await evaluate_candidate_async(candidate, personas, llm, max_concurrency)
+        candidate.persona_scores = scores
+        candidate.decision = compute_integrated_decision(scores, primary_persona_id)
+
+    return candidates
 
 
 def evaluate_candidates(
@@ -293,24 +271,9 @@ def evaluate_candidates(
     personas: list[PersonaDefinition],
     llm: LLMClient,
     primary_persona_id: str | None = None,
+    max_concurrency: int = 4,
 ) -> list[ProblemCandidateItem]:
-    """Evaluate all problem candidates with personas.
-
-    Args:
-        candidates: List of problem candidates to evaluate.
-        personas: List of personas to evaluate with.
-        llm: LLM client instance.
-        primary_persona_id: Optional primary persona ID for tie-breaking.
-
-    Returns:
-        Updated problem candidates with persona_scores and decision.
-    """
-    if not candidates or not personas:
-        return candidates
-
-    for candidate in candidates:
-        scores = evaluate_candidate(candidate, personas, llm)
-        candidate.persona_scores = scores
-        candidate.decision = compute_integrated_decision(scores, primary_persona_id)
-
-    return candidates
+    """Sync wrapper for candidate evaluation."""
+    return asyncio.run(
+        evaluate_candidates_async(candidates, personas, llm, primary_persona_id, max_concurrency)
+    )

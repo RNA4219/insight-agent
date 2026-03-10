@@ -1,0 +1,71 @@
+# Routing Configuration
+# Controls how personas are selected for each analysis run
+
+# Enable/disable persona routing
+enabled: true
+
+# Lead persona that orchestrates routing decisions
+lead_persona: "bright_generalist"
+
+# Whether the lead persona can be changed during routing
+lead_persona_mutable: true
+
+# Fallback personas used when routing fails
+fallback_personas:
+  - "data_researcher"
+  - "operator"
+
+# Mandatory audit personas - always included in routing
+mandatory_audit_personas:
+  - "data_researcher"
+
+# Maximum number of personas to select by evidence density
+max_personas_by_evidence_density:
+  low: 3
+  medium: 4
+  high: 6
+
+# Problem-type specific routing rules
+routing_rules:
+  technical_debt:
+    preferred_personas:
+      - "data_researcher"
+      - "operator"
+    skip_personas:
+      - "curiosity_entertainer"
+    min_personas: 2
+    max_personas: 4
+
+  process_bottleneck:
+    preferred_personas:
+      - "operator"
+      - "strategist"
+    skip_personas:
+      - "curiosity_entertainer"
+    min_personas: 2
+    max_personas: 4
+
+  knowledge_gap:
+    preferred_personas:
+      - "researcher"
+      - "data_researcher"
+    skip_personas: []
+    min_personas: 2
+    max_personas: 5
+
+  resource_constraint:
+    preferred_personas:
+      - "operator"
+      - "strategist"
+    skip_personas:
+      - "curiosity_entertainer"
+    min_personas: 2
+    max_personas: 4
+
+  unclear:
+    preferred_personas:
+      - "data_researcher"
+      - "researcher"
+    skip_personas: []
+    min_personas: 2
+    max_personas: 4

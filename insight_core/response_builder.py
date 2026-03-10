@@ -22,6 +22,7 @@ from insight_core.schemas import (
     OpenQuestionItem,
     PersonaSource,
     ProblemCandidateItem,
+    RoutingPlan,
     RunInfo,
     RunStatus,
     SourceUnit,
@@ -41,6 +42,7 @@ def build_response(
     confidence: float,
     status: RunStatus,
     source_units: list[SourceUnit] | None = None,
+    routing_plan: RoutingPlan | None = None,
     started_at: datetime | None = None,
 ) -> InsightResponse:
     """Build the final InsightResponse.
@@ -58,6 +60,7 @@ def build_response(
         confidence: Overall confidence score.
         status: Run status.
         source_units: Optional source units (if include_source_units).
+        routing_plan: Optional routing plan.
         started_at: When processing started.
 
     Returns:
@@ -75,6 +78,12 @@ def build_response(
     elif normalized_request.persona_source == PersonaSource.MERGED:
         persona_catalog_version = normalized_request.persona_catalog_version
 
+    # Build applied_personas from routing_plan if available
+    if routing_plan:
+        applied_personas = [routing_plan.lead_persona] + routing_plan.selected_personas
+    else:
+        applied_personas = [p.persona_id for p in normalized_request.personas]
+
     # Build run info
     run = RunInfo(
         run_id=normalized_request.run_id,
@@ -83,7 +92,7 @@ def build_response(
         status=status,
         started_at=start_time,
         finished_at=now,
-        applied_personas=[p.persona_id for p in normalized_request.personas],
+        applied_personas=applied_personas,
         persona_source=normalized_request.persona_source,
         persona_catalog_version=persona_catalog_version,
     )
@@ -112,6 +121,7 @@ def build_response(
         failures=failures,
         confidence=confidence,
         source_units=final_source_units,
+        routing_plan=routing_plan,
     )
 
 
@@ -157,6 +167,7 @@ def build_failure_response(
         failures=failures,
         confidence=0.0,
         source_units=[],
+        routing_plan=None,
     )
 
 
@@ -172,6 +183,7 @@ def build_partial_response(
     failures: list[FailureItem],
     confidence: float,
     source_units: list[SourceUnit] | None = None,
+    routing_plan: RoutingPlan | None = None,
     started_at: datetime | None = None,
 ) -> InsightResponse:
     """Build a partial response when some processing failed.
@@ -188,6 +200,7 @@ def build_partial_response(
         failures: Failures encountered.
         confidence: Overall confidence score.
         source_units: Optional source units.
+        routing_plan: Optional routing plan.
         started_at: When processing started.
 
     Returns:
@@ -206,5 +219,6 @@ def build_partial_response(
         confidence=confidence,
         status=RunStatus.PARTIAL,
         source_units=source_units,
+        routing_plan=routing_plan,
         started_at=started_at,
     )

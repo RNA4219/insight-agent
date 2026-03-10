@@ -5,7 +5,7 @@ structured insights including claims, assumptions, limitations,
 and problem candidates.
 """
 
-from insight_core.pipeline import run_insight, run_pipeline
+from insight_core.pipeline import run_insight, run_pipeline, run_pipeline_async
 from insight_core.schemas import (
     AssumptionItem,
     ClaimItem,
@@ -32,10 +32,9 @@ from insight_core.schemas import (
 )
 
 __all__ = [
-    # Main API
     "run_pipeline",
+    "run_pipeline_async",
     "run_insight",
-    # Request/Response
     "InsightRequest",
     "InsightResponse",
     "NormalizedRequest",
@@ -43,7 +42,6 @@ __all__ = [
     "Source",
     "SourceUnit",
     "Constraints",
-    # Items
     "ClaimItem",
     "AssumptionItem",
     "LimitationItem",
@@ -52,10 +50,8 @@ __all__ = [
     "OpenQuestionItem",
     "EvidenceRef",
     "FailureItem",
-    # Persona
     "PersonaDefinition",
     "PersonaScore",
-    # Enums
     "EpistemicMode",
     "DerivationType",
     "UpdateRule",

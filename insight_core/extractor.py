@@ -8,6 +8,7 @@ Responsible for:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from insight_core.llm_client import LLMClient
@@ -24,15 +25,7 @@ from insight_core.schemas import (
 
 
 def build_extraction_prompt(unit: SourceUnit, domain: str | None = None) -> tuple[str, str]:
-    """Build prompt for extraction.
-
-    Args:
-        unit: Source unit to extract from.
-        domain: Optional domain context.
-
-    Returns:
-        Tuple of (system_prompt, user_prompt).
-    """
+    """Build prompt for extraction."""
     domain_context = f"\n対象領域: {domain}" if domain else ""
 
     system_prompt = f"""あなたは学術・技術資料の分析専門家です。
@@ -102,16 +95,7 @@ def parse_extraction_response(
     unit: SourceUnit,
     evidence_counter: int,
 ) -> tuple[list[ClaimItem], list[AssumptionItem], list[LimitationItem], list[EvidenceRef], int]:
-    """Parse LLM extraction response into items.
-
-    Args:
-        response: Parsed JSON response from LLM.
-        unit: Source unit that was extracted from.
-        evidence_counter: Starting counter for evidence IDs.
-
-    Returns:
-        Tuple of (claims, assumptions, limitations, evidence_refs, new_evidence_counter).
-    """
+    """Parse LLM extraction response into items."""
     claims: list[ClaimItem] = []
     assumptions: list[AssumptionItem] = []
     limitations: list[LimitationItem] = []
@@ -119,15 +103,11 @@ def parse_extraction_response(
 
     item_counter = 0
 
-    # Parse claims
     for claim_data in response.get("claims", []):
         item_counter += 1
         evidence_counter += 1
-
         claim_id = f"cl_{unit.unit_id}_{item_counter}"
         evidence_id = f"ev_{evidence_counter}"
-
-        # Create evidence ref
         evidence_refs.append(
             EvidenceRef(
                 evidence_id=evidence_id,
@@ -136,7 +116,6 @@ def parse_extraction_response(
                 quote=claim_data.get("quote"),
             )
         )
-
         claims.append(
             ClaimItem(
                 id=claim_id,
@@ -149,14 +128,11 @@ def parse_extraction_response(
             )
         )
 
-    # Parse assumptions
     for assumption_data in response.get("assumptions", []):
         item_counter += 1
         evidence_counter += 1
-
         assumption_id = f"as_{unit.unit_id}_{item_counter}"
         evidence_id = f"ev_{evidence_counter}"
-
         evidence_refs.append(
             EvidenceRef(
                 evidence_id=evidence_id,
@@ -165,7 +141,6 @@ def parse_extraction_response(
                 quote=assumption_data.get("quote"),
             )
         )
-
         assumptions.append(
             AssumptionItem(
                 id=assumption_id,
@@ -178,14 +153,11 @@ def parse_extraction_response(
             )
         )
 
-    # Parse limitations
     for limitation_data in response.get("limitations", []):
         item_counter += 1
         evidence_counter += 1
-
         limitation_id = f"lm_{unit.unit_id}_{item_counter}"
         evidence_id = f"ev_{evidence_counter}"
-
         evidence_refs.append(
             EvidenceRef(
                 evidence_id=evidence_id,
@@ -194,7 +166,6 @@ def parse_extraction_response(
                 quote=limitation_data.get("quote"),
             )
         )
-
         limitations.append(
             LimitationItem(
                 id=limitation_id,
@@ -210,66 +181,90 @@ def parse_extraction_response(
     return claims, assumptions, limitations, evidence_refs, evidence_counter
 
 
+async def _extract_response_for_unit(
+    unit: SourceUnit,
+    llm: LLMClient,
+    domain: str | None = None,
+) -> dict[str, Any]:
+    system_prompt, user_prompt = build_extraction_prompt(unit, domain)
+    return await llm.complete_json_async(system_prompt, user_prompt)
+
+
+async def extract_from_unit_async(
+    unit: SourceUnit,
+    llm: LLMClient,
+    domain: str | None = None,
+    evidence_counter: int = 0,
+) -> tuple[list[ClaimItem], list[AssumptionItem], list[LimitationItem], list[EvidenceRef], int]:
+    """Extract items from a single source unit."""
+    try:
+        response = await _extract_response_for_unit(unit, llm, domain)
+        return parse_extraction_response(response, unit, evidence_counter)
+    except Exception as e:
+        raise RuntimeError(f"Extraction failed for unit {unit.unit_id}: {e}") from e
+
+
 def extract_from_unit(
     unit: SourceUnit,
     llm: LLMClient,
     domain: str | None = None,
     evidence_counter: int = 0,
 ) -> tuple[list[ClaimItem], list[AssumptionItem], list[LimitationItem], list[EvidenceRef], int]:
-    """Extract items from a single source unit.
+    """Sync wrapper for single-unit extraction."""
+    return asyncio.run(extract_from_unit_async(unit, llm, domain, evidence_counter))
 
-    Args:
-        unit: Source unit to extract from.
-        llm: LLM client instance.
-        domain: Optional domain context.
-        evidence_counter: Starting counter for evidence IDs.
 
-    Returns:
-        Tuple of (claims, assumptions, limitations, evidence_refs, new_evidence_counter).
-    """
-    system_prompt, user_prompt = build_extraction_prompt(unit, domain)
+async def extract_from_units_async(
+    units: list[SourceUnit],
+    llm: LLMClient,
+    domain: str | None = None,
+    max_concurrency: int = 4,
+) -> tuple[list[ClaimItem], list[AssumptionItem], list[LimitationItem], list[EvidenceRef], list[str]]:
+    """Extract items from multiple source units in parallel."""
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
-    try:
-        response = llm.complete_json(system_prompt, user_prompt)
-        return parse_extraction_response(response, unit, evidence_counter)
-    except Exception as e:
-        # Return empty on failure, caller can track failures
-        raise RuntimeError(f"Extraction failed for unit {unit.unit_id}: {e}") from e
+    async def run_one(index: int, unit: SourceUnit):
+        async with semaphore:
+            try:
+                response = await _extract_response_for_unit(unit, llm, domain)
+                return index, unit, response, None
+            except Exception as exc:
+                return index, unit, None, exc
+
+    tasks = [asyncio.create_task(run_one(index, unit)) for index, unit in enumerate(units)]
+    raw_results = await asyncio.gather(*tasks)
+    raw_results.sort(key=lambda item: item[0])
+
+    all_claims: list[ClaimItem] = []
+    all_assumptions: list[AssumptionItem] = []
+    all_limitations: list[LimitationItem] = []
+    all_evidence: list[EvidenceRef] = []
+    failed_unit_ids: list[str] = []
+    evidence_counter = 0
+
+    for _, unit, response, error in raw_results:
+        if error is not None or response is None:
+            failed_unit_ids.append(unit.unit_id)
+            continue
+
+        claims, assumptions, limitations, evidence_refs, evidence_counter = parse_extraction_response(
+            response,
+            unit,
+            evidence_counter,
+        )
+        all_claims.extend(claims)
+        all_assumptions.extend(assumptions)
+        all_limitations.extend(limitations)
+        all_evidence.extend(evidence_refs)
+
+    return all_claims, all_assumptions, all_limitations, all_evidence, failed_unit_ids
 
 
 def extract_from_units(
     units: list[SourceUnit],
     llm: LLMClient,
     domain: str | None = None,
+    max_concurrency: int = 4,
 ) -> tuple[list[ClaimItem], list[AssumptionItem], list[LimitationItem], list[EvidenceRef], list[str]]:
-    """Extract items from multiple source units.
-
-    Args:
-        units: List of source units to extract from.
-        llm: LLM client instance.
-        domain: Optional domain context.
-
-    Returns:
-        Tuple of (claims, assumptions, limitations, evidence_refs, failed_unit_ids).
-    """
-    all_claims: list[ClaimItem] = []
-    all_assumptions: list[AssumptionItem] = []
-    all_limitations: list[LimitationItem] = []
-    all_evidence: list[EvidenceRef] = []
-    failed_unit_ids: list[str] = []
-
-    evidence_counter = 0
-
-    for unit in units:
-        try:
-            claims, assumptions, limitations, evidence_refs, evidence_counter = extract_from_unit(
-                unit, llm, domain, evidence_counter
-            )
-            all_claims.extend(claims)
-            all_assumptions.extend(assumptions)
-            all_limitations.extend(limitations)
-            all_evidence.extend(evidence_refs)
-        except Exception:
-            failed_unit_ids.append(unit.unit_id)
-
-    return all_claims, all_assumptions, all_limitations, all_evidence, failed_unit_ids
+    """Sync wrapper for multi-unit extraction."""
+    return asyncio.run(extract_from_units_async(units, llm, domain, max_concurrency))

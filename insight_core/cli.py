@@ -47,10 +47,26 @@ def main() -> int:
         default=None,
         help="Domain context for analysis",
     )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=Path,
+        default=None,
+        help="Checkpoint JSON path for saving intermediate progress",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from checkpoint when available",
+    )
+    parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=None,
+        help="Maximum concurrent LLM calls for extraction and evaluation",
+    )
 
     args = parser.parse_args()
 
-    # Load input
     if not args.input.exists():
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         return 1
@@ -62,21 +78,18 @@ def main() -> int:
         print(f"Error: Invalid JSON in input file: {e}", file=sys.stderr)
         return 1
 
-    # Build request
     try:
         request = build_request_from_dict(input_data, args)
     except Exception as e:
         print(f"Error building request: {e}", file=sys.stderr)
         return 1
 
-    # Run pipeline
     try:
         response = run_pipeline(request)
     except Exception as e:
         print(f"Error running pipeline: {e}", file=sys.stderr)
         return 1
 
-    # Output
     output_json = response.model_dump_json(indent=2)
 
     if args.output:
@@ -91,7 +104,6 @@ def main() -> int:
 
 def build_request_from_dict(data: dict, args: argparse.Namespace) -> InsightRequest:
     """Build InsightRequest from parsed JSON data."""
-    # Build sources
     sources = []
     for s in data.get("sources", []):
         sources.append(
@@ -104,24 +116,26 @@ def build_request_from_dict(data: dict, args: argparse.Namespace) -> InsightRequ
             )
         )
 
-    # Build personas if provided
     personas = None
     if data.get("personas"):
         personas = [PersonaDefinition(**p) for p in data["personas"]]
 
-    # Build constraints
     constraints_data = data.get("constraints", {})
     if args.domain:
         constraints_data["domain"] = args.domain
     constraints = Constraints(**constraints_data) if constraints_data else None
 
-    # Build context
     context = Context(**data["context"]) if data.get("context") else None
 
-    # Build options
     options_data = data.get("options", {})
     if args.include_source_units:
         options_data["include_source_units"] = True
+    if args.checkpoint_path:
+        options_data["checkpoint_path"] = str(args.checkpoint_path)
+    if args.resume:
+        options_data["resume"] = True
+    if args.max_concurrency is not None:
+        options_data["max_concurrency"] = args.max_concurrency
     options = Options(**options_data) if options_data else None
 
     return InsightRequest(

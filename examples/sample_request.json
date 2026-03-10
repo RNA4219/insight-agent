@@ -1,0 +1,20 @@
+{
+  "mode": "insight",
+  "request_id": "example_001",
+  "sources": [
+    {
+      "source_id": "src_001",
+      "source_type": "text",
+      "title": "Sample ML Paper Abstract",
+      "content": "# Abstract\n\nWe present a novel approach to text classification using transformer architectures. Our model achieves state-of-the-art results on the benchmark dataset, improving accuracy from 85% to 92%.\n\n# Method\n\nThe proposed method uses a fine-tuned BERT model with an additional classification layer. We trained on the standard training split for 10 epochs.\n\n# Limitations\n\nThe current study only evaluates on English text. Performance on other languages remains untested. Additionally, the training data may contain biases that could affect real-world deployment.\n\n# Conclusion\n\nOur method demonstrates significant improvements in text classification tasks."
+    }
+  ],
+  "constraints": {
+    "domain": "machine_learning",
+    "max_problem_candidates": 3,
+    "max_insights": 2
+  },
+  "options": {
+    "include_source_units": false
+  }
+}

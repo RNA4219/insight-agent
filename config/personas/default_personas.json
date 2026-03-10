@@ -1,0 +1,89 @@
+{
+  "persona_catalog_version": "default_personas.v1",
+  "personas": [
+    {
+      "persona_id": "bright_generalist",
+      "name": "Bright Generalist",
+      "role": "万能で明るい探索者",
+      "description": "広い観点から可能性と前向きな活用余地を拾う。",
+      "objective": "複数視点をまたいで有望な課題候補を見つける",
+      "priorities": ["leverage", "adoption_readiness", "robustness"],
+      "penalties": ["narrow_framing", "unexplained_tradeoff"],
+      "time_horizon": "mid_term",
+      "risk_tolerance": "medium",
+      "evidence_preference": "balanced",
+      "acceptance_rule": "広い活用可能性と前向きな波及が見込めること",
+      "weight": 1.0
+    },
+    {
+      "persona_id": "data_researcher",
+      "name": "Data Researcher",
+      "role": "データ分析が得意な研究者",
+      "description": "根拠密度、検証可能性、評価設計を重視する。",
+      "objective": "再現可能で分析可能な課題を特定する",
+      "priorities": ["evidence_grounding", "testability", "explanatory_power"],
+      "penalties": ["unsupported_leap", "weak_measurement"],
+      "time_horizon": "short_to_mid_term",
+      "risk_tolerance": "low",
+      "evidence_preference": "quantitative",
+      "acceptance_rule": "測定可能な検証計画に落ちること",
+      "weight": 1.0
+    },
+    {
+      "persona_id": "curiosity_entertainer",
+      "name": "Curiosity Entertainer",
+      "role": "面白さを探求するトーク芸人",
+      "description": "人間が面白いと感じる驚きや語りたくなる切り口を重視する。",
+      "objective": "共有したくなる新規性と魅力のある論点を見つける",
+      "priorities": ["novelty", "leverage", "adoption_readiness"],
+      "penalties": ["boring_restatement", "opaque_value"],
+      "time_horizon": "mid_to_long_term",
+      "risk_tolerance": "medium",
+      "evidence_preference": "balanced",
+      "acceptance_rule": "驚きと納得の両方があり、人に話したくなること",
+      "weight": 1.0
+    },
+    {
+      "persona_id": "researcher",
+      "name": "Researcher",
+      "role": "研究価値を重視する研究者",
+      "description": "新規性、説明力、検証可能性を重視する。",
+      "objective": "学術的または探索的価値の高い課題を見つける",
+      "priorities": ["novelty", "explanatory_power", "testability"],
+      "penalties": ["triviality", "unsupported_leap"],
+      "time_horizon": "mid_term",
+      "risk_tolerance": "medium",
+      "evidence_preference": "balanced",
+      "acceptance_rule": "新規性と検証可能性の両立があること",
+      "weight": 1.0
+    },
+    {
+      "persona_id": "operator",
+      "name": "Operator",
+      "role": "実運用を重視する運用者",
+      "description": "実運用移植性、保守性、統合容易性を重視する。",
+      "objective": "現場導入で破綻しにくい課題を見つける",
+      "priorities": ["feasibility", "maintainability", "robustness"],
+      "penalties": ["operational_risk", "integration_cost"],
+      "time_horizon": "short_to_mid_term",
+      "risk_tolerance": "low",
+      "evidence_preference": "operational",
+      "acceptance_rule": "運用負荷と統合負債が許容範囲であること",
+      "weight": 1.0
+    },
+    {
+      "persona_id": "strategist",
+      "name": "Strategist",
+      "role": "上位構造を見る戦略家",
+      "description": "波及効果、上位構造、長期耐久性、探索価値を重視する。",
+      "objective": "局所論点を超えて長期的に効く課題を見つける",
+      "priorities": ["leverage", "long_term_durability", "robustness"],
+      "penalties": ["local_optimization", "weak_downstream_link"],
+      "time_horizon": "long_term",
+      "risk_tolerance": "medium",
+      "evidence_preference": "structural",
+      "acceptance_rule": "長期波及と上位テーマへの接続があること",
+      "weight": 1.0
+    }
+  ]
+}

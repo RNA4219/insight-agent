@@ -23,12 +23,17 @@ pip install -e .
 `.env`ファイルをプロジェクトルートに作成：
 
 ```env
-# プロバイダー選択: openai または alibaba
-MEMX_LLM_PROVIDER=alibaba
+# プロバイダー選択: openai / alibaba / openrouter
+MEMX_LLM_PROVIDER=openrouter
 
 # OpenAI使用時
 OPENAI_API_KEY=sk-xxx
 MEMX_OPENAI_MODEL=gpt-4o-mini
+
+# OpenRouter使用時
+OPENROUTER_API_KEY=sk-or-xxx
+MEMX_OPENROUTER_MODEL=openai/gpt-4.1-mini
+MEMX_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
 # Alibaba (DashScope) 使用時
 DASHSCOPE_API_KEY=sk-xxx
@@ -118,6 +123,12 @@ response = run_pipeline(request)
 
 ```bash
 python -m insight_core.cli -i input.json -o output.json
+```
+
+#### PDFを直接解析
+
+```bash
+python -m insight_core.cli --pdf material/sample.pdf -o output.json --domain machine_learning
 ```
 
 #### ドメイン指定

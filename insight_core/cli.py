@@ -16,10 +16,11 @@ from insight_core.schemas import (
     PersonaDefinition,
     Source,
 )
+from insight_core.source_loader import resolve_source_content
 
 
-def main() -> int:
-    """Main CLI entry point."""
+def build_parser() -> argparse.ArgumentParser:
+    """Build CLI argument parser."""
     parser = argparse.ArgumentParser(
         description="Insight Agent - A problem discovery core agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -27,8 +28,32 @@ def main() -> int:
     parser.add_argument(
         "-i", "--input",
         type=Path,
-        required=True,
+        default=None,
         help="Path to input JSON file (InsightRequest format)",
+    )
+    parser.add_argument(
+        "--pdf",
+        type=Path,
+        default=None,
+        help="Path to a PDF file to analyze directly",
+    )
+    parser.add_argument(
+        "--source-id",
+        type=str,
+        default=None,
+        help="Source ID to use with --pdf",
+    )
+    parser.add_argument(
+        "--title",
+        type=str,
+        default=None,
+        help="Source title to use with --pdf",
+    )
+    parser.add_argument(
+        "--request-id",
+        type=str,
+        default=None,
+        help="Optional request ID override for direct PDF runs",
     )
     parser.add_argument(
         "-o", "--output",
@@ -64,18 +89,37 @@ def main() -> int:
         default=None,
         help="Maximum concurrent LLM calls for extraction and evaluation",
     )
+    return parser
 
+
+def main() -> int:
+    """Main CLI entry point."""
+    parser = build_parser()
     args = parser.parse_args()
 
-    if not args.input.exists():
+    if bool(args.input) == bool(args.pdf):
+        print("Error: specify exactly one of --input or --pdf", file=sys.stderr)
+        return 1
+
+    if args.input and not args.input.exists():
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         return 1
 
+    if args.pdf and not args.pdf.exists():
+        print(f"Error: PDF file not found: {args.pdf}", file=sys.stderr)
+        return 1
+
     try:
-        with open(args.input, encoding="utf-8") as f:
-            input_data = json.load(f)
+        if args.input:
+            with open(args.input, encoding="utf-8") as f:
+                input_data = json.load(f)
+        else:
+            input_data = build_pdf_input_payload(args.pdf, args)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON in input file: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error loading input: {e}", file=sys.stderr)
         return 1
 
     try:
@@ -93,6 +137,7 @@ def main() -> int:
     output_json = response.model_dump_json(indent=2)
 
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(output_json)
         print(f"Response written to: {args.output}")
@@ -102,16 +147,35 @@ def main() -> int:
     return 0
 
 
+def build_pdf_input_payload(pdf_path: Path, args: argparse.Namespace) -> dict:
+    """Build an InsightRequest-like payload from a direct PDF path."""
+    return {
+        "mode": "insight",
+        "request_id": args.request_id,
+        "sources": [
+            {
+                "source_id": args.source_id or pdf_path.stem,
+                "source_type": "pdf",
+                "title": args.title or pdf_path.stem,
+                "path": str(pdf_path),
+            }
+        ],
+        "constraints": {},
+        "options": {},
+    }
+
+
 def build_request_from_dict(data: dict, args: argparse.Namespace) -> InsightRequest:
     """Build InsightRequest from parsed JSON data."""
     sources = []
     for s in data.get("sources", []):
+        content, title = resolve_source_content(s)
         sources.append(
             Source(
                 source_id=s.get("source_id", f"src_{len(sources)+1}"),
                 source_type=s.get("source_type", "text"),
-                title=s.get("title"),
-                content=s["content"],
+                title=title,
+                content=content,
                 metadata=s.get("metadata"),
             )
         )
@@ -120,14 +184,14 @@ def build_request_from_dict(data: dict, args: argparse.Namespace) -> InsightRequ
     if data.get("personas"):
         personas = [PersonaDefinition(**p) for p in data["personas"]]
 
-    constraints_data = data.get("constraints", {})
+    constraints_data = dict(data.get("constraints", {}))
     if args.domain:
         constraints_data["domain"] = args.domain
     constraints = Constraints(**constraints_data) if constraints_data else None
 
     context = Context(**data["context"]) if data.get("context") else None
 
-    options_data = data.get("options", {})
+    options_data = dict(data.get("options", {}))
     if args.include_source_units:
         options_data["include_source_units"] = True
     if args.checkpoint_path:

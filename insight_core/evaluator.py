@@ -10,7 +10,6 @@ Responsible for:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from insight_core.llm_client import LLMClient
 from insight_core.schemas import (
@@ -127,7 +126,7 @@ JSON形式で評価結果を出力してください。"""
 
 
 def parse_evaluation_response(
-    response: dict[str, Any],
+    response: dict,
     persona: PersonaDefinition,
     normalized_weight: float,
 ) -> PersonaScore:
@@ -162,37 +161,70 @@ def parse_evaluation_response(
     )
 
 
+def _normalize_persona_weights(personas: list[PersonaDefinition]) -> dict[str, float]:
+    """Normalize persona weights, falling back to even weights when total is zero."""
+    if not personas:
+        return {}
+
+    total_weight = sum(p.weight for p in personas)
+    if total_weight <= 0:
+        equal_weight = 1.0 / len(personas)
+        return {p.persona_id: equal_weight for p in personas}
+
+    return {p.persona_id: p.weight / total_weight for p in personas}
+
+
+async def _evaluate_for_persona(
+    candidate: ProblemCandidateItem,
+    persona: PersonaDefinition,
+    llm: LLMClient,
+    normalized_weight: float,
+    semaphore: asyncio.Semaphore | None = None,
+) -> PersonaScore:
+    """Evaluate a single candidate/persona pair."""
+
+    async def run_evaluation() -> PersonaScore:
+        system_prompt, user_prompt = build_evaluation_prompt(candidate, persona)
+        response = await llm.complete_json_async(system_prompt, user_prompt)
+        return parse_evaluation_response(response, persona, normalized_weight)
+
+    try:
+        if semaphore is None:
+            return await run_evaluation()
+        async with semaphore:
+            return await run_evaluation()
+    except Exception:
+        return PersonaScore(
+            persona_id=persona.persona_id,
+            axis_scores={},
+            weighted_score=0.5,
+            applied_weight=normalized_weight,
+            decision=Decision.RESERVE,
+            reason_summary="評価エラーのため保留",
+        )
+
+
 async def evaluate_candidate_async(
     candidate: ProblemCandidateItem,
     personas: list[PersonaDefinition],
     llm: LLMClient,
     max_concurrency: int = 4,
+    semaphore: asyncio.Semaphore | None = None,
+    normalized_weights: dict[str, float] | None = None,
 ) -> list[PersonaScore]:
     """Evaluate a problem candidate with all personas in parallel."""
-    total_weight = sum(p.weight for p in personas)
-    normalized_weights = {p.persona_id: p.weight / total_weight for p in personas}
-    semaphore = asyncio.Semaphore(max(1, max_concurrency))
+    normalized_weights = normalized_weights or _normalize_persona_weights(personas)
+    shared_semaphore = semaphore or asyncio.Semaphore(max(1, max_concurrency))
 
     async def run_for_persona(index: int, persona: PersonaDefinition):
-        async with semaphore:
-            try:
-                system_prompt, user_prompt = build_evaluation_prompt(candidate, persona)
-                response = await llm.complete_json_async(system_prompt, user_prompt)
-                score = parse_evaluation_response(
-                    response,
-                    persona,
-                    normalized_weights[persona.persona_id],
-                )
-            except Exception:
-                score = PersonaScore(
-                    persona_id=persona.persona_id,
-                    axis_scores={},
-                    weighted_score=0.5,
-                    applied_weight=normalized_weights[persona.persona_id],
-                    decision=Decision.RESERVE,
-                    reason_summary="評価エラーのため保留",
-                )
-            return index, score
+        score = await _evaluate_for_persona(
+            candidate,
+            persona,
+            llm,
+            normalized_weights[persona.persona_id],
+            shared_semaphore,
+        )
+        return index, score
 
     tasks = [asyncio.create_task(run_for_persona(index, persona)) for index, persona in enumerate(personas)]
     scores = await asyncio.gather(*tasks)
@@ -258,10 +290,31 @@ async def evaluate_candidates_async(
     if not candidates or not personas:
         return candidates
 
-    for candidate in candidates:
-        scores = await evaluate_candidate_async(candidate, personas, llm, max_concurrency)
-        candidate.persona_scores = scores
-        candidate.decision = compute_integrated_decision(scores, primary_persona_id)
+    normalized_weights = _normalize_persona_weights(personas)
+    shared_semaphore = asyncio.Semaphore(max(1, max_concurrency))
+
+    async def run_for_candidate(index: int, candidate: ProblemCandidateItem):
+        scores = await evaluate_candidate_async(
+            candidate,
+            personas,
+            llm,
+            max_concurrency=max_concurrency,
+            semaphore=shared_semaphore,
+            normalized_weights=normalized_weights,
+        )
+        decision = compute_integrated_decision(scores, primary_persona_id)
+        return index, scores, decision
+
+    tasks = [
+        asyncio.create_task(run_for_candidate(index, candidate))
+        for index, candidate in enumerate(candidates)
+    ]
+    results = await asyncio.gather(*tasks)
+    results.sort(key=lambda item: item[0])
+
+    for index, scores, decision in results:
+        candidates[index].persona_scores = scores
+        candidates[index].decision = decision
 
     return candidates
 

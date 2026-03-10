@@ -13,26 +13,17 @@ from typing import Any
 
 from insight_core.schemas import Source, SourceUnit
 
+PDF_MAX_CHARS = 5000
+
 
 def detect_section_boundaries(content: str) -> list[dict[str, Any]]:
-    """Detect section boundaries in content.
-
-    Looks for markdown-style headers and natural paragraph breaks.
-
-    Args:
-        content: The source content to analyze.
-
-    Returns:
-        List of boundary info dicts with 'type', 'level', 'start', 'end', 'title'.
-    """
+    """Detect section boundaries in content."""
     boundaries = []
     lines = content.split("\n")
 
     current_pos = 0
     for i, line in enumerate(lines):
-        line_len = len(line) + 1  # +1 for newline
-
-        # Markdown headers (# Header)
+        line_len = len(line) + 1
         header_match = re.match(r"^(#{1,6})\s+(.+)$", line)
         if header_match:
             level = len(header_match.group(1))
@@ -51,15 +42,7 @@ def detect_section_boundaries(content: str) -> list[dict[str, Any]]:
 
 
 def split_by_paragraphs(content: str, max_chars: int = 2000) -> list[str]:
-    """Split content by paragraphs with size limit.
-
-    Args:
-        content: Content to split.
-        max_chars: Maximum characters per unit.
-
-    Returns:
-        List of content chunks.
-    """
+    """Split content by paragraphs with size limit."""
     paragraphs = re.split(r"\n\s*\n", content)
     chunks = []
     current_chunk = ""
@@ -69,13 +52,11 @@ def split_by_paragraphs(content: str, max_chars: int = 2000) -> list[str]:
         if not para:
             continue
 
-        # If single paragraph exceeds max, split by sentences
         if len(para) > max_chars:
             if current_chunk:
                 chunks.append(current_chunk.strip())
                 current_chunk = ""
 
-            # Split by sentences
             sentences = re.split(r"(?<=[.!?。！？])\s+", para)
             for sent in sentences:
                 if len(current_chunk) + len(sent) > max_chars:
@@ -85,7 +66,6 @@ def split_by_paragraphs(content: str, max_chars: int = 2000) -> list[str]:
                 else:
                     current_chunk += " " + sent if current_chunk else sent
         else:
-            # Add to current chunk
             if len(current_chunk) + len(para) + 2 > max_chars:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
@@ -99,54 +79,42 @@ def split_by_paragraphs(content: str, max_chars: int = 2000) -> list[str]:
     return chunks
 
 
+def _resolve_max_chars(source: Source, default_max_chars: int) -> int:
+    if source.source_type == "pdf":
+        return max(default_max_chars, PDF_MAX_CHARS)
+    return default_max_chars
+
+
 def unitize_source(
     source: Source,
     max_chars: int = 2000,
 ) -> list[SourceUnit]:
-    """Split a source into SourceUnits.
-
-    Strategy:
-    1. Try to detect section boundaries (markdown headers)
-    2. Within each section, split by paragraphs
-    3. Ensure each unit is under max_chars
-
-    Args:
-        source: The source to unitize.
-        max_chars: Maximum characters per unit.
-
-    Returns:
-        List of SourceUnit objects.
-    """
+    """Split a source into SourceUnits."""
     units = []
     content = source.content
+    source_max_chars = _resolve_max_chars(source, max_chars)
 
     if not content or not content.strip():
         return units
 
-    # Detect section boundaries
     boundaries = detect_section_boundaries(content)
 
     if boundaries:
-        # Split by sections
         lines = content.split("\n")
         section_starts = [b["line_index"] for b in boundaries]
-
-        # Add end marker
         section_starts.append(len(lines))
 
         for i, boundary in enumerate(boundaries):
             start_line = boundary["line_index"]
             end_line = section_starts[i + 1]
-
             section_content = "\n".join(lines[start_line:end_line]).strip()
 
             if not section_content:
                 continue
 
-            # If section is too large, split further
-            if len(section_content) > max_chars:
-                chunks = split_by_paragraphs(section_content, max_chars)
-                for j, chunk in enumerate(chunks):
+            if len(section_content) > source_max_chars:
+                chunks = split_by_paragraphs(section_content, source_max_chars)
+                for chunk in chunks:
                     unit_id = f"unit_{source.source_id}_{len(units) + 1}"
                     units.append(
                         SourceUnit(
@@ -171,8 +139,7 @@ def unitize_source(
                     )
                 )
     else:
-        # No section boundaries, split by paragraphs
-        chunks = split_by_paragraphs(content, max_chars)
+        chunks = split_by_paragraphs(content, source_max_chars)
         for chunk in chunks:
             unit_id = f"unit_{source.source_id}_{len(units) + 1}"
             units.append(
@@ -193,15 +160,7 @@ def unitize_sources(
     sources: list[Source],
     max_chars: int = 2000,
 ) -> list[SourceUnit]:
-    """Split multiple sources into SourceUnits.
-
-    Args:
-        sources: List of sources to unitize.
-        max_chars: Maximum characters per unit.
-
-    Returns:
-        List of all SourceUnit objects.
-    """
+    """Split multiple sources into SourceUnits."""
     all_units = []
     for source in sources:
         units = unitize_source(source, max_chars)

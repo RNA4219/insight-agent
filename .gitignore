@@ -26,10 +26,21 @@ go.work
 # OS
 .DS_Store
 Thumbs.db
+
 # Environment files
 .env
 .env.*
 !.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local generated artifacts
+/artifacts/
+/benchmark-output*.json
+/material/
 
 # Local memx runtime data
 /memx_spec_v3/go/*.db

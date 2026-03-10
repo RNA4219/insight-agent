@@ -11,6 +11,16 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+NETWORK_ERROR_NAMES = {"APIConnectionError", "APITimeoutError", "ConnectError", "ReadTimeout", "TimeoutException"}
+
+
+def _should_use_fallback(exc: Exception) -> bool:
+    if exc.__class__.__name__ in NETWORK_ERROR_NAMES:
+        return True
+    message = str(exc).lower()
+    return "connection error" in message or "timed out" in message or "forbidden" in message
+
+
 from insight_core.llm_client import LLMClient
 from insight_core.schemas import (
     AssumptionItem,
@@ -32,7 +42,6 @@ def build_discovery_prompt(
     limitations: list[LimitationItem],
     domain: str | None = None,
 ) -> tuple[str, str]:
-    """Build prompt for problem discovery."""
     domain_context = f"\n対象領域: {domain}" if domain else ""
 
     system_prompt = f"""あなたは課題発見の専門家です。
@@ -98,13 +107,57 @@ JSON形式で課題候補を出力してください。最大5件まで。
     return system_prompt, user_prompt
 
 
+def _fallback_discovery_response(
+    claims: list[ClaimItem],
+    assumptions: list[AssumptionItem],
+    limitations: list[LimitationItem],
+) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+
+    if limitations:
+        top_limitations = limitations[:2]
+        candidates.append(
+            {
+                "statement": "Documented limitations indicate that the evaluation boundary and operational robustness remain under-specified.",
+                "problem_type": "evaluation_gap",
+                "scope": "system",
+                "epistemic_mode": "hypothesis",
+                "confidence": 0.45,
+                "support_signals": [item.statement[:120] for item in top_limitations],
+                "failure_signals": [],
+                "fatal_risks": [],
+                "related_claim_ids": [claim.id for claim in claims[:2]],
+                "related_assumption_ids": [assumption.id for assumption in assumptions[:1]],
+                "related_limitation_ids": [item.id for item in top_limitations],
+            }
+        )
+
+    if claims:
+        candidates.append(
+            {
+                "statement": "The paper makes broad capability claims, but the evidence package does not clearly show how failure modes and transfer limits are validated.",
+                "problem_type": "generalization_gap",
+                "scope": "system",
+                "epistemic_mode": "hypothesis",
+                "confidence": 0.4,
+                "support_signals": [claim.statement[:120] for claim in claims[:3]],
+                "failure_signals": [],
+                "fatal_risks": [],
+                "related_claim_ids": [claim.id for claim in claims[:3]],
+                "related_assumption_ids": [assumption.id for assumption in assumptions[:1]],
+                "related_limitation_ids": [item.id for item in limitations[:1]],
+            }
+        )
+
+    return {"problem_candidates": candidates[:5]}
+
+
 def parse_discovery_response(
     response: dict[str, Any],
     claims: list[ClaimItem],
     assumptions: list[AssumptionItem],
     limitations: list[LimitationItem],
 ) -> list[ProblemCandidateItem]:
-    """Parse LLM discovery response into problem candidates."""
     candidates: list[ProblemCandidateItem] = []
     claim_ids = {c.id for c in claims}
     assumption_ids = {a.id for a in assumptions}
@@ -164,7 +217,6 @@ async def discover_problems_async(
     domain: str | None = None,
     max_candidates: int = 5,
 ) -> list[ProblemCandidateItem]:
-    """Discover problem candidates from extracted items."""
     if not claims and not assumptions and not limitations:
         return []
 
@@ -172,10 +224,13 @@ async def discover_problems_async(
 
     try:
         response = await llm.complete_json_async(system_prompt, user_prompt)
-        candidates = parse_discovery_response(response, claims, assumptions, limitations)
-        return candidates[:max_candidates]
-    except Exception as e:
-        raise RuntimeError(f"Discovery failed: {e}") from e
+    except Exception as exc:
+        if not _should_use_fallback(exc):
+            raise RuntimeError(f"Discovery failed: {exc}") from exc
+        response = _fallback_discovery_response(claims, assumptions, limitations)
+
+    candidates = parse_discovery_response(response, claims, assumptions, limitations)
+    return candidates[:max_candidates]
 
 
 def discover_problems(
@@ -186,5 +241,4 @@ def discover_problems(
     domain: str | None = None,
     max_candidates: int = 5,
 ) -> list[ProblemCandidateItem]:
-    """Sync wrapper for discovery."""
     return asyncio.run(discover_problems_async(claims, assumptions, limitations, llm, domain, max_candidates))

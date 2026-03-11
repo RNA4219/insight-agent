@@ -32,6 +32,12 @@ DEFAULT_AXES = [
 ]
 
 
+def _format_bullet_list(items: list[str], fallback: str = "特に指定なし") -> str:
+    if not items:
+        return fallback
+    return "\n".join(f"- {item}" for item in items)
+
+
 def build_evaluation_prompt(
     candidate: ProblemCandidateItem,
     persona: PersonaDefinition,
@@ -63,10 +69,35 @@ def build_evaluation_prompt(
 ## 根拠選好
 {persona.evidence_preference or '特に指定なし'}
 
+## このPersonaが最初に確認する問い
+{_format_bullet_list(persona.key_questions)}
+
+## 判断に必要な根拠
+{_format_bullet_list(persona.evidence_requirements)}
+
+## 有望とみなすトリガー
+{_format_bullet_list(persona.trigger_signals)}
+
+## 強く警戒するレッドフラグ
+{_format_bullet_list(persona.red_flags)}
+
+## 振る舞いメモ
+{_format_bullet_list(persona.optional_notes)}
+
+## 統合時の話し方
+{persona.synthesis_style or '重要な論点から順に、推測を言い切りにしない'}
+
 ## 受け入れ判断基準
 {persona.acceptance_rule}
 
 ---
+
+評価するときは次を守ってください:
+- Persona固有の問いに答える形で候補を点検する
+- 根拠要求を満たせない場合は `needs_more_evidence` を積極的に使う
+- トリガーがあっても、レッドフラグが強い場合は保留または棄却に寄せる
+- optional_notes に口調や守るべき振る舞いがある場合、それを守りつつ分析精度を優先する
+- `reason_summary` には「何が通ったか / 何が引っかかったか」を短く含める
 
 以下の8軸で0.0-1.0のスコアを付けてください：
 - evidence_grounding: 根拠の確かさ
@@ -117,6 +148,9 @@ JSONフォーマット：
 
 ## 致命的リスク
 {chr(10).join(['- ' + r for r in candidate.fatal_risks]) if candidate.fatal_risks else '（なし）'}
+
+## Personaが特に気にする問い
+{_format_bullet_list(persona.key_questions)}
 
 ---
 
@@ -330,3 +364,4 @@ def evaluate_candidates(
     return asyncio.run(
         evaluate_candidates_async(candidates, personas, llm, primary_persona_id, max_concurrency)
     )
+

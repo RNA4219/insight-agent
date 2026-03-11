@@ -183,7 +183,7 @@ python -m insight_core.cli -i input.json -o output.json --include-source-units
     "finished_at": "2026-03-10T12:00:30Z",
     "applied_personas": ["bright_generalist", "data_researcher", ...],
     "persona_source": "default",
-    "persona_catalog_version": "default_personas.v1"
+    "persona_catalog_version": "default_personas.v3"
   },
   "claims": [...],
   "assumptions": [...],
@@ -241,7 +241,14 @@ pytest tests/test_insight_agent.py::TestSchemas -v
 
 ## 標準Persona
 
-デフォルトで6種類のPersonaが適用されます：
+デフォルトで7種類のPersonaが適用されます。`default_personas.v3` では、各Personaに以下のような詳細設定が入っています。
+
+- `key_questions`: そのPersonaが最初に確認する問い
+- `evidence_requirements`: 判断に必要とする根拠
+- `trigger_signals`: 呼び出す価値が高い状況
+- `red_flags`: 強く警戒する兆候
+- `optional_notes`: 口調・匿名性・安全ガードなどの補助メモ
+- `synthesis_style`: 最終コメントのまとめ方
 
 | Persona ID | 役割 | 重視点 |
 |------------|------|--------|
@@ -251,6 +258,7 @@ pytest tests/test_insight_agent.py::TestSchemas -v
 | `researcher` | 研究価値重視 | 新規性、説明力 |
 | `operator` | 実運用重視 | 実現性、保守性 |
 | `strategist` | 戦略的視点 | 長期波及、堅牢性 |
+| `moon_gazer` | 監督AI視点 | 論点圧縮、境界管理、破綻検知 |
 
 ## アーキテクチャ
 
@@ -298,3 +306,4 @@ pytest tests/test_insight_agent.py::TestSchemas -v
 ## ライセンス
 
 MIT License
+

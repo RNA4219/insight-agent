@@ -82,8 +82,13 @@ class TestPersonaRegistry:
 
         data = load_default_personas()
         assert "personas" in data
-        assert len(data["personas"]) == 6
-        assert data["persona_catalog_version"] == "default_personas.v1"
+        assert len(data["personas"]) == 7
+        assert data["persona_catalog_version"] == "default_personas.v3"
+        first = data["personas"][0]
+        assert len(first["key_questions"]) >= 2
+        assert len(first["red_flags"]) >= 1
+        celesta = next(p for p in data["personas"] if p["persona_id"] == "moon_gazer")
+        assert len(celesta["optional_notes"]) >= 5
 
     def test_validate_personas(self):
         from insight_core.persona_registry import validate_personas
@@ -93,6 +98,7 @@ class TestPersonaRegistry:
                 persona_id="test_1",
                 name="Test 1",
                 objective="Test objective",
+                key_questions=["What should we verify first?"],
                 acceptance_rule="Test rule",
                 weight=1.0,
             ),
@@ -100,6 +106,7 @@ class TestPersonaRegistry:
                 persona_id="test_2",
                 name="Test 2",
                 objective="Test objective",
+                red_flags=["Unsupported leap"],
                 acceptance_rule="Test rule",
                 weight=0.5,
             ),
@@ -115,12 +122,15 @@ class TestPersonaRegistry:
                 persona_id="duplicate",
                 name="Test 1",
                 objective="Test objective",
+                evidence_requirements=["Need benchmark evidence"],
                 acceptance_rule="Test rule",
             ),
             PersonaDefinition(
                 persona_id="duplicate",
                 name="Test 2",
                 objective="Test objective",
+                optional_notes=["Keep it anonymous"],
+                synthesis_style="Summarize risks first",
                 acceptance_rule="Test rule",
             ),
         ]
@@ -142,7 +152,7 @@ class TestRequestNormalizer:
 
         assert normalized.run_id.startswith("run_")
         assert normalized.request_id.startswith("req_")
-        assert len(normalized.personas) == 6
+        assert len(normalized.personas) == 7
 
     def test_normalize_invalid_mode(self):
         from insight_core.request_normalizer import normalize_request
@@ -388,3 +398,4 @@ class TestAsyncRetryAndResume:
         assert len(resumed_response.problem_candidates) == 1
         assert len(resumed_response.insights) == 1
         assert not any(f.stage == "discovery" for f in resumed_response.failures)
+

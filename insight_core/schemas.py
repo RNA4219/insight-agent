@@ -119,6 +119,18 @@ class PersonaRole(str, Enum):
     NOVELTY_PROBE = "novelty_probe"
 
 
+class JapaneseSummary(BaseModel):
+    """日本語要約結果."""
+
+    overview: str = Field(description="分析結果の概要")
+    key_claims: list[str] = Field(default_factory=list, description="主要な主張")
+    problem_summary: list[dict[str, Any]] = Field(
+        default_factory=list, description="課題候補の要約"
+    )
+    recommendations: list[str] = Field(default_factory=list, description="推奨アクション")
+    confidence_note: str = Field(description="信頼度に関する注記")
+
+
 # ============================================================================
 # Source Interfaces
 # ============================================================================
@@ -242,6 +254,12 @@ class PersonaDefinition(BaseModel):
     time_horizon: str | None = None
     risk_tolerance: str | None = None
     evidence_preference: str | None = None
+    key_questions: list[str] = Field(default_factory=list)
+    evidence_requirements: list[str] = Field(default_factory=list)
+    trigger_signals: list[str] = Field(default_factory=list)
+    red_flags: list[str] = Field(default_factory=list)
+    optional_notes: list[str] = Field(default_factory=list)
+    synthesis_style: str | None = None
     acceptance_rule: str
     weight: float = Field(default=1.0, ge=0.0)
 
@@ -341,6 +359,7 @@ class Options(BaseModel):
 
     include_source_units: bool = False
     include_intermediate_items: bool = False
+    include_japanese_summary: bool = False
     checkpoint_path: str | None = None
     resume: bool = False
     max_concurrency: int = 4
@@ -454,6 +473,7 @@ class InsightResponse(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     source_units: list[SourceUnit] = Field(default_factory=list)
     routing_plan: RoutingPlan | None = None
+    japanese_summary: JapaneseSummary | None = None
 
 
 # ============================================================================

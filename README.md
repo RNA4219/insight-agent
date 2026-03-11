@@ -24,21 +24,21 @@ pip install -e .
 
 ```env
 # プロバイダー選択: openai / alibaba / openrouter
-MEMX_LLM_PROVIDER=openrouter
+LLM_PROVIDER=openrouter
 
 # OpenAI使用時
 OPENAI_API_KEY=sk-xxx
-MEMX_OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5-mini-2025-08-07
 
 # OpenRouter使用時
 OPENROUTER_API_KEY=sk-or-xxx
-MEMX_OPENROUTER_MODEL=openai/gpt-4.1-mini
-MEMX_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
 # Alibaba (DashScope) 使用時
 DASHSCOPE_API_KEY=sk-xxx
-MEMX_ALIBABA_MODEL=glm-5
-MEMX_ALIBABA_BASE_URL=https://coding-intl.dashscope.aliyuncs.com/v1
+ALIBABA_MODEL=glm-5
+ALIBABA_BASE_URL=https://coding-intl.dashscope.aliyuncs.com/v1
 ```
 
 ## 使い方

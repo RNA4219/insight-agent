@@ -49,51 +49,49 @@ class LLMClient:
         self.max_tokens = max_tokens
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
-        self.provider = (provider or os.environ.get("MEMX_LLM_PROVIDER", "openai")).lower()
+        self.provider = (provider or os.environ.get("LLM_PROVIDER", "openai")).lower()
 
         if self.provider == "alibaba":
-            self.model = model or os.environ.get("MEMX_ALIBABA_MODEL", "glm-5")
+            self.model = model or os.environ.get("ALIBABA_MODEL", "glm-5")
             self.api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
             self.base_url = base_url or os.environ.get(
-                "MEMX_ALIBABA_BASE_URL",
+                "ALIBABA_BASE_URL",
                 "https://coding-intl.dashscope.aliyuncs.com/v1",
             )
-            self.timeout_seconds = timeout_seconds or float(os.environ.get("MEMX_ALIBABA_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
+            self.timeout_seconds = timeout_seconds or float(os.environ.get("ALIBABA_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
             self.default_headers: dict[str, str] = {}
             missing_key_hint = "DASHSCOPE_API_KEY"
         elif self.provider == "openrouter":
             self.model = model or _first_env(
-                "MEMX_OPENROUTER_MODEL",
+                "OPENROUTER_MODEL",
                 "OPENROUTER_API_MODEL",
-                default="openai/gpt-4.1-mini",
+                default="nvidia/nemotron-3-nano-30b-a3b:free",
             )
             self.api_key = api_key or _first_env("OPENROUTER_API_KEY", "OPENROUTER_KEY")
             self.base_url = base_url or _first_env(
-                "MEMX_OPENROUTER_BASE_URL",
                 "OPENROUTER_BASE_URL",
                 "OPENROUTER_API_BASE",
                 default="https://openrouter.ai/api/v1",
             )
             self.timeout_seconds = timeout_seconds or float(
                 _first_env(
-                    "MEMX_OPENROUTER_TIMEOUT_SECONDS",
                     "OPENROUTER_TIMEOUT_SECONDS",
                     default=str(DEFAULT_TIMEOUT_SECONDS),
                 )
             )
             self.default_headers = {}
-            referer = _first_env("MEMX_OPENROUTER_SITE_URL", "OPENROUTER_SITE_URL")
-            title = _first_env("MEMX_OPENROUTER_APP_NAME", "OPENROUTER_APP_NAME")
+            referer = _first_env("OPENROUTER_SITE_URL")
+            title = _first_env("OPENROUTER_APP_NAME")
             if referer:
                 self.default_headers["HTTP-Referer"] = referer
             if title:
                 self.default_headers["X-Title"] = title
             missing_key_hint = "OPENROUTER_API_KEY"
         else:
-            self.model = model or os.environ.get("MEMX_OPENAI_MODEL", "gpt-4o-mini")
+            self.model = model or os.environ.get("OPENAI_MODEL", "gpt-5-mini-2025-08-07")
             self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-            self.base_url = base_url or os.environ.get("MEMX_OPENAI_BASE_URL")
-            self.timeout_seconds = timeout_seconds or float(os.environ.get("MEMX_OPENAI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
+            self.base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+            self.timeout_seconds = timeout_seconds or float(os.environ.get("OPENAI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
             self.default_headers = {}
             missing_key_hint = "OPENAI_API_KEY"
 
@@ -117,15 +115,28 @@ class LLMClient:
         user_prompt: str,
         temperature: float,
     ) -> str:
-        response = self._client.chat.completions.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            temperature=temperature,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        # Use max_completion_tokens for OpenAI (newer models require this)
+        # and max_tokens for other providers
+        # Note: gpt-5-mini does not support temperature parameter
+        if self.provider == "openai":
+            response = self._client.chat.completions.create(
+                model=self.model,
+                max_completion_tokens=self.max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        else:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
         return response.choices[0].message.content or ""
 
     async def _request_completion_async(
@@ -134,15 +145,28 @@ class LLMClient:
         user_prompt: str,
         temperature: float,
     ) -> str:
-        response = await self._async_client.chat.completions.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            temperature=temperature,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        # Use max_completion_tokens for OpenAI (newer models require this)
+        # and max_tokens for other providers
+        # Note: gpt-5-mini does not support temperature parameter
+        if self.provider == "openai":
+            response = await self._async_client.chat.completions.create(
+                model=self.model,
+                max_completion_tokens=self.max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        else:
+            response = await self._async_client.chat.completions.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
         return response.choices[0].message.content or ""
 
     def _complete_with_retry(

@@ -4,7 +4,7 @@ from insight_core.llm_client import LLMClient
 
 
 def test_llm_client_reads_openrouter_provider(monkeypatch):
-    monkeypatch.setenv("MEMX_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("OPENROUTER_API_MODEL", "openai/gpt-4.1-mini")
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

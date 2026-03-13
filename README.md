@@ -229,6 +229,7 @@ insight-agent/
 - `run_pipeline_result()` / `run_insight_result()` は互換 wrapper
 - 新しい入力形式を足すときは CLI ではなく loader 層へ追加する
 - 新しい出力形式を足すときは pipeline 本体ではなく formatter 側へ追加する
+- 軽量化を入れたものの、出力結果を出すのにかなり時間がかかるので、気長に待ってください。
 
 ## テスト
 

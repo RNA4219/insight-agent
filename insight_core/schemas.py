@@ -131,6 +131,12 @@ class JapaneseSummary(BaseModel):
     confidence_note: str = Field(description="信頼度に関する注記")
 
 
+class ReasoningSummary(BaseModel):
+    """仮説・推論だけを抜き出した短文要約."""
+
+    short_text: str = Field(description="パラメータや根拠IDを含まない短文要約")
+
+
 # ============================================================================
 # Source Interfaces
 # ============================================================================
@@ -248,6 +254,8 @@ class PersonaDefinition(BaseModel):
     name: str
     role: str | None = None
     description: str | None = None
+    obsession: str | None = None
+    blind_spot: str | None = None
     objective: str
     priorities: list[str] = Field(default_factory=list)
     penalties: list[str] = Field(default_factory=list)
@@ -445,8 +453,8 @@ class RoutingConfig(BaseModel):
     enabled: bool = True
     lead_persona: str = "bright_generalist"
     lead_persona_mutable: bool = True
-    fallback_personas: list[str] = Field(default_factory=lambda: ["data_researcher", "operator"])
-    mandatory_audit_personas: list[str] = Field(default_factory=lambda: ["data_researcher"])
+    fallback_personas: list[str] = Field(default_factory=lambda: ["data_researcher", "detective", "operator"])
+    mandatory_audit_personas: list[str] = Field(default_factory=lambda: ["data_researcher", "detective"])
     max_personas_by_evidence_density: dict[str, int] = Field(
         default_factory=lambda: {"low": 3, "medium": 4, "high": 6}
     )
@@ -474,6 +482,7 @@ class InsightResponse(BaseModel):
     source_units: list[SourceUnit] = Field(default_factory=list)
     routing_plan: RoutingPlan | None = None
     japanese_summary: JapaneseSummary | None = None
+    reasoning_summary: ReasoningSummary | None = None
 
 
 # ============================================================================

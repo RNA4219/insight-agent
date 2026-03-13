@@ -82,13 +82,16 @@ class TestPersonaRegistry:
 
         data = load_default_personas()
         assert "personas" in data
-        assert len(data["personas"]) == 7
-        assert data["persona_catalog_version"] == "default_personas.v3"
+        assert len(data["personas"]) == 8
+        assert data["persona_catalog_version"] == "default_personas.v4"
         first = data["personas"][0]
         assert len(first["key_questions"]) >= 2
         assert len(first["red_flags"]) >= 1
+        assert first["obsession"]
         celesta = next(p for p in data["personas"] if p["persona_id"] == "moon_gazer")
+        detective = next(p for p in data["personas"] if p["persona_id"] == "detective")
         assert len(celesta["optional_notes"]) >= 5
+        assert detective["blind_spot"]
 
     def test_validate_personas(self):
         from insight_core.persona_registry import validate_personas
@@ -152,7 +155,7 @@ class TestRequestNormalizer:
 
         assert normalized.run_id.startswith("run_")
         assert normalized.request_id.startswith("req_")
-        assert len(normalized.personas) == 7
+        assert len(normalized.personas) == 8
 
     def test_normalize_invalid_mode(self):
         from insight_core.request_normalizer import normalize_request

@@ -10,11 +10,29 @@ except ModuleNotFoundError:  # pragma: no cover - handled at runtime
     fitz = None
 
 
+PDF_TEXT_CACHE_SUFFIX = ".txt"
+
+
+def _pdf_text_cache_path(pdf_path: Path) -> Path:
+    return pdf_path.with_suffix(PDF_TEXT_CACHE_SUFFIX)
+
+
+def _should_use_cached_pdf_text(pdf_path: Path, cache_path: Path) -> bool:
+    if not cache_path.exists():
+        return False
+    return cache_path.stat().st_mtime >= pdf_path.stat().st_mtime
+
+
 def extract_text_from_pdf(pdf_path: str | Path) -> str:
-    """Extract plain text from a PDF file."""
+    """Extract plain text from a PDF file, caching the extracted text beside the PDF."""
     path = Path(pdf_path)
     if not path.exists():
         raise FileNotFoundError(f"PDF file not found: {path}")
+
+    cache_path = _pdf_text_cache_path(path)
+    if _should_use_cached_pdf_text(path, cache_path):
+        return cache_path.read_text(encoding="utf-8")
+
     if fitz is None:
         raise RuntimeError("PyMuPDF (fitz) is required to read PDF files")
 
@@ -29,7 +47,9 @@ def extract_text_from_pdf(pdf_path: str | Path) -> str:
     if not page_texts:
         raise ValueError(f"No extractable text found in PDF: {path}")
 
-    return "\n\n".join(page_texts)
+    extracted_text = "\n\n".join(page_texts)
+    cache_path.write_text(extracted_text, encoding="utf-8")
+    return extracted_text
 
 
 def resolve_source_content(source_data: dict) -> tuple[str, str | None]:

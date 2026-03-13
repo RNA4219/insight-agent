@@ -1,71 +1,92 @@
 # Routing Configuration
 # Controls how personas are selected for each analysis run
 
-# Enable/disable persona routing
 enabled: true
-
-# Lead persona that orchestrates routing decisions
 lead_persona: "bright_generalist"
-
-# Whether the lead persona can be changed during routing
 lead_persona_mutable: true
 
-# Fallback personas used when routing fails
 fallback_personas:
   - "data_researcher"
+  - "detective"
   - "operator"
 
-# Mandatory audit personas - always included in routing
 mandatory_audit_personas:
   - "data_researcher"
+  - "detective"
 
-# Maximum number of personas to select by evidence density
 max_personas_by_evidence_density:
   low: 3
   medium: 4
   high: 6
 
-# Problem-type specific routing rules
 routing_rules:
-  technical_debt:
-    preferred_personas:
+  evaluation_gap:
+    preferred:
       - "data_researcher"
+      - "detective"
       - "operator"
-    skip_personas:
-      - "curiosity_entertainer"
-    min_personas: 2
-    max_personas: 4
+    optional:
+      - "researcher"
 
-  process_bottleneck:
-    preferred_personas:
-      - "operator"
-      - "strategist"
-    skip_personas:
-      - "curiosity_entertainer"
-    min_personas: 2
-    max_personas: 4
-
-  knowledge_gap:
-    preferred_personas:
+  assumption_weakness:
+    preferred:
+      - "detective"
       - "researcher"
       - "data_researcher"
-    skip_personas: []
-    min_personas: 2
-    max_personas: 5
-
-  resource_constraint:
-    preferred_personas:
-      - "operator"
+    optional:
       - "strategist"
-    skip_personas:
-      - "curiosity_entertainer"
-    min_personas: 2
-    max_personas: 4
 
-  unclear:
-    preferred_personas:
+  contradiction:
+    preferred:
+      - "detective"
       - "data_researcher"
       - "researcher"
-    skip_personas: []
-    min_personas: 2
-    max_personas: 4
+    optional:
+      - "operator"
+
+  omitted_factor:
+    preferred:
+      - "detective"
+      - "strategist"
+      - "bright_generalist"
+    optional:
+      - "operator"
+
+  operational_risk:
+    preferred:
+      - "operator"
+      - "detective"
+      - "strategist"
+    optional:
+      - "researcher"
+
+  scalability_limit:
+    preferred:
+      - "operator"
+      - "strategist"
+      - "detective"
+    optional:
+      - "researcher"
+
+  data_gap:
+    preferred:
+      - "data_researcher"
+      - "researcher"
+      - "detective"
+    optional:
+      - "operator"
+
+  generalization_gap:
+    preferred:
+      - "researcher"
+      - "strategist"
+      - "detective"
+    optional:
+      - "data_researcher"
+
+  novelty_opportunity:
+    preferred:
+      - "curiosity_entertainer"
+      - "bright_generalist"
+    optional:
+      - "researcher"

@@ -22,7 +22,7 @@ def _should_use_fallback(exc: Exception) -> bool:
     return "connection error" in message or "timed out" in message or "forbidden" in message
 
 
-from insight_core.llm_client import LLMClient
+from insight_core.llm_client import LLMClient, complete_json_async_compat, get_stage_max_tokens
 from insight_core.schemas import (
     AssumptionItem,
     ClaimItem,
@@ -58,6 +58,9 @@ ASSUMPTION_KEYWORDS = (
     "rely on",
     "designed for",
 )
+EXTRACTION_MAX_TOKENS = get_stage_max_tokens("extraction")
+
+
 LIMITATION_KEYWORDS = (
     "however",
     "but",
@@ -97,31 +100,37 @@ def build_extraction_prompt(unit: SourceUnit, domain: str | None = None) -> tupl
    - derivation_type: direct または inferred
 {domain_context}
 
+出力は簡潔にしてください：
+- claims は最大2件、assumptions は最大2件、limitations は最大2件
+- 各 statement は1文で簡潔に書く
+- 各 quote は原文の短い断片だけを使い、140文字以内にする
+- JSON以外の前置きや説明は一切書かない
+
 JSONフォーマットで出力してください：
 ```json
 {{
   "claims": [
     {{
-      "statement": "主張の内容",
+      "statement": "主張の内容（1文）",
       "epistemic_mode": "observation|interpretation",
       "confidence": 0.0-1.0,
-      "quote": "根拠となる引用文（可能な限り原文から抽出）"
+      "quote": "140文字以内の短い引用"
     }}
   ],
   "assumptions": [
     {{
-      "statement": "前提の内容",
+      "statement": "前提の内容（1文）",
       "is_explicit": true|false,
       "confidence": 0.0-1.0,
-      "quote": "根拠となる引用文"
+      "quote": "140文字以内の短い引用"
     }}
   ],
   "limitations": [
     {{
-      "statement": "制約・限界の内容",
+      "statement": "制約・限界の内容（1文）",
       "limitation_type": "explicit|evaluation_gap|generalization_gap|operational",
       "confidence": 0.0-1.0,
-      "quote": "根拠となる引用文"
+      "quote": "140文字以内の短い引用"
     }}
   ]
 }}
@@ -133,7 +142,7 @@ JSONフォーマットで出力してください：
 {unit.content}
 
 [出力]
-JSON形式で出力してください。該当する項目がない場合は空配列にしてください。"""
+JSON形式のみで出力してください。該当する項目がない場合は空配列にしてください。各配列は最大2件までです。"""
 
     return system_prompt, user_prompt
 
@@ -279,7 +288,12 @@ def parse_extraction_response(
 async def _extract_response_for_unit(unit: SourceUnit, llm: LLMClient, domain: str | None = None) -> dict[str, Any]:
     system_prompt, user_prompt = build_extraction_prompt(unit, domain)
     try:
-        return await llm.complete_json_async(system_prompt, user_prompt)
+        return await complete_json_async_compat(
+            llm,
+            system_prompt,
+            user_prompt,
+            max_tokens=EXTRACTION_MAX_TOKENS,
+        )
     except Exception as exc:
         if _should_use_fallback(exc):
             return _fallback_extract_response(unit)

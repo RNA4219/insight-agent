@@ -133,6 +133,7 @@ class TestRoutingConfig:
         assert config.enabled is True
         assert config.lead_persona == "bright_generalist"
         assert "data_researcher" in config.mandatory_audit_personas
+        assert "detective" in config.mandatory_audit_personas
         assert config.max_personas_by_evidence_density["low"] == 3
         assert config.max_personas_by_evidence_density["medium"] == 4
         assert config.max_personas_by_evidence_density["high"] == 6
@@ -279,6 +280,7 @@ class TestFallbackRouting:
         assert plan.lead_persona == "bright_generalist"
         assert plan.evidence_density == EvidenceDensity.LOW
         assert len(plan.selected_personas) >= 2
+        assert "detective" in plan.selected_personas
         assert plan.routing_confidence == 0.5
         assert any("fallback" in r.lower() for r in plan.routing_reason)
 
@@ -314,10 +316,11 @@ class TestFallbackRouting:
             "researcher",
             "strategist",
             "curiosity_entertainer",
+            "detective",
         ]
         plan = create_all_personas_routing_plan(available_ids)
 
-        assert len(plan.selected_personas) == 5
+        assert len(plan.selected_personas) == 6
         assert plan.evidence_density == EvidenceDensity.MEDIUM
         assert plan.routing_confidence == 0.6
 
@@ -327,6 +330,7 @@ class TestFallbackRouting:
         assert plan.role_assignments["researcher"] == PersonaRole.HYPOTHESIS_REFINER
         assert plan.role_assignments["strategist"] == PersonaRole.STRUCTURAL_ABSTRACTION
         assert plan.role_assignments["curiosity_entertainer"] == PersonaRole.NOVELTY_PROBE
+        assert plan.role_assignments["detective"] == PersonaRole.HYPOTHESIS_REFINER
 
 
 class TestRoutingPlanModel:

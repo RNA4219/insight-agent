@@ -12,12 +12,13 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from insight_core.llm_client import LLMClient
+from insight_core.llm_client import LLMClient, complete_json_async_compat, get_stage_max_tokens
 from insight_core.schemas import (
     AssumptionItem,
     ClaimItem,
     Decision,
     DerivationType,
+    EpistemicMode,
     FailureItem,
     InsightItem,
     LimitationItem,
@@ -26,8 +27,21 @@ from insight_core.schemas import (
     ProblemCandidateItem,
     RunStatus,
     UpdateRule,
-    EpistemicMode,
 )
+
+
+CONSOLIDATION_MAX_TOKENS = get_stage_max_tokens("consolidation")
+
+
+def _format_persona_deliberation(candidate: ProblemCandidateItem) -> str:
+    if not candidate.persona_scores:
+        return "  Persona差分: （なし）"
+
+    lines = ["  Persona差分:"]
+    for score in candidate.persona_scores[:4]:
+        reason = score.reason_summary or "理由未記載"
+        lines.append(f"    - {score.persona_id} [{score.decision.value}] {reason}")
+    return "\n".join(lines)
 
 
 def build_insight_prompt(
@@ -45,6 +59,7 @@ def build_insight_prompt(
 - 候補の羅列ではなく、上位構造の説明
 - 個別の問題を貫く共通のパターンや根本原因
 - 次のアクションにつながる示唆
+- Personaごとの差分や衝突がある場合、それを消さずに上位構造へ昇華する
 
 JSONフォーマット：
 ```json
@@ -60,8 +75,13 @@ JSONフォーマット：
 ```{domain_context}"""
 
     candidates_text = "\n\n".join(
-        [f"[{c.id}] {c.statement}\n  タイプ: {c.problem_type.value if c.problem_type else '不明'}\n  スコープ: {c.scope.value if c.scope else '不明'}"
-         for c in accepted_candidates]
+        [
+            f"[{c.id}] {c.statement}\n"
+            f"  タイプ: {c.problem_type.value if c.problem_type else '不明'}\n"
+            f"  スコープ: {c.scope.value if c.scope else '不明'}\n"
+            f"{_format_persona_deliberation(c)}"
+            for c in accepted_candidates
+        ]
     )
 
     user_prompt = f"""以下の課題候補から洞察を生成してください。
@@ -89,7 +109,12 @@ async def generate_insights_async(
     system_prompt, user_prompt = build_insight_prompt(accepted, domain)
 
     try:
-        response = await llm.complete_json_async(system_prompt, user_prompt)
+        response = await complete_json_async_compat(
+            llm,
+            system_prompt,
+            user_prompt,
+            max_tokens=CONSOLIDATION_MAX_TOKENS,
+        )
         insights: list[InsightItem] = []
         for i, insight_data in enumerate(response.get("insights", [])[:max_insights]):
             insight_id = f"in_{i+1:03d}"

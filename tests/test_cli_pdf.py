@@ -22,6 +22,7 @@ class TestPdfCliSupport:
             request_id="req_pdf_001",
             source_id=None,
             title=None,
+            japanese_summary=False,
         )
         payload = build_pdf_input_payload(pdf_path, args)
 

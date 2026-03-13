@@ -1,0 +1,508 @@
+了解です。
+**そのまま実装に落としやすい形**で、改定案を出します。
+
+狙いは3つです。
+
+1. **事実 / 著者主張 / システム推論 / 批判仮説**を分離する
+2. **弱い根拠で強い problem が立つ**のを防ぐ
+3. **最終出力として読みやすくする**
+
+---
+
+# 改定方針
+
+今の出力は大枠よくできていますが、次の3点が詰めどころです。
+
+* `claims` に**著者の売り文句**と**本文で観測された事実**が同居している
+* `problem_candidates` が、やや**ペルソナ都合で先走る**
+* `insights` が空で、**統合結論が弱い**
+
+なので、**schema を少し増やして、昇格条件を厳しくする**のが一番効きます。
+
+---
+
+# 1. schema改定案
+
+## 1-1. epistemic_mode を分解
+
+現状:
+
+* `observation`
+* `interpretation`
+* `hypothesis`
+
+改定後:
+
+* `source_fact`
+  ソースに明示された事実。表・数値・制約・記述。
+* `author_claim`
+  著者が主張しているが、未検証の広い言い方を含むもの。
+* `system_inference`
+  ソースから妥当に導ける推論。
+* `critique_hypothesis`
+  システムが立てた批判仮説。
+* `open_question`
+  未解決の確認事項。
+
+これで、
+
+* 「40%改善」は `source_fact`
+* 「real-world deployment を支える」は `author_claim`
+* 「一般化ギャップがありそう」は `critique_hypothesis`
+
+と綺麗に分けられます。
+
+---
+
+## 1-2. derivation_type を整理
+
+現状:
+
+* `direct`
+* `inferred`
+
+改定後:
+
+* `quoted`
+  直接引用あり
+* `summarized`
+  複数引用を要約
+* `inferred_near`
+  かなり近い推論
+* `inferred_speculative`
+  飛躍を含む推論
+
+これで confidence の上限も制御しやすくなります。
+
+---
+
+## 1-3. claims / assumptions / limitations を一本化
+
+現状の3分割は悪くないですが、境界が曖昧です。
+実装しやすさ重視なら、まずは **共通ノード型** に寄せるのが良いです。
+
+```json
+{
+  "id": "nd_001",
+  "node_type": "claim",
+  "statement": "SkillNet significantly enhances agent performance...",
+  "epistemic_mode": "source_fact",
+  "derivation_type": "quoted",
+  "confidence": 0.94,
+  "evidence_refs": ["ev_1"],
+  "source_scope": "core_result",
+  "update_rule": "retain"
+}
+```
+
+`node_type` の候補:
+
+* `claim`
+* `assumption`
+* `limitation`
+* `risk`
+* `insight`
+* `question`
+
+これで downstream 処理が楽になります。
+
+---
+
+# 2. evidence model改定案
+
+## 2-1. evidence に役割を持たせる
+
+今の `evidence_refs` は単なる参照ですが、**その証拠が何の役で使われたか**が欲しいです。
+
+```json
+{
+  "evidence_id": "ev_15",
+  "source_id": "2603.04448v1",
+  "unit_id": "unit_2603.04448v1_3",
+  "quote": "Experimental results across three text-based simulated environments",
+  "evidence_role": ["scope_limit", "external_validity_constraint"],
+  "strength": 0.88
+}
+```
+
+`evidence_role` 候補:
+
+* `main_support`
+* `counter_signal`
+* `scope_limit`
+* `author_position`
+* `evaluation_setup`
+* `risk_hint`
+
+これで pb_001 のような問題提起が、
+「何を根拠に立ったのか」が明確になります。
+
+---
+
+## 2-2. evidence sufficiency を導入
+
+`problem_candidates` ごとに、証拠が十分かを明示します。
+
+```json
+{
+  "evidence_sufficiency": {
+    "status": "partial",
+    "missing": [
+      "real-world evaluation evidence",
+      "deployment case evidence"
+    ],
+    "support_count": 2,
+    "counter_count": 1
+  }
+}
+```
+
+これがあると `needs_more_evidence` がかなり自然になります。
+
+---
+
+# 3. problem_candidates の昇格条件改定
+
+ここが最重要です。
+
+## 3-1. 昇格ルール
+
+### 現状の問題
+
+弱い証拠でも、ペルソナの論理でそれっぽい problem が立つ。
+
+### 改定ルール
+
+`problem_candidate` は、以下を満たしたときのみ生成:
+
+* `support_signals >= 2`
+* そのうち **最低1つは direct quote 由来**
+* `counter_signal` を最低1つ探す
+* `problem_type` に応じた必須証拠を満たす
+
+### 例
+
+`generalization_gap` の必須条件:
+
+* `scope_limit` evidence が1件以上
+* `author_claim` か `performance_claim` が1件以上
+
+`evaluation_gap` の必須条件:
+
+* 評価方法を示す evidence
+* 品質保証の限界を示す evidence
+
+`operational_risk` の必須条件:
+
+* 少なくとも「実運用前提の主張」が存在
+* かつ運用記述の欠落が discussion / limitation で示される
+  もしくは `operational extrapolation` として格下げ
+
+---
+
+## 3-2. problem_type を増やす
+
+現状:
+
+* `generalization_gap`
+* `evaluation_gap`
+* `operational_risk`
+
+追加推奨:
+
+* `claim_scope_mismatch`
+* `evidence_coverage_gap`
+* `deployment_extrapolation`
+* `repository_poisoning_risk`
+* `benchmark_transfer_risk`
+
+これで pb_003 は `operational_risk` より
+`deployment_extrapolation` の方がしっくり来ます。
+
+---
+
+## 3-3. 決定ロジックを改定
+
+現状は persona vote が強めですが、
+最終 decision は **証拠ゲート優先** にした方がいいです。
+
+### 推奨順序
+
+1. evidence sufficiency 判定
+2. contradiction 判定
+3. persona review
+4. final decision
+
+### final decision ルール例
+
+* 証拠十分 + 反証弱い → `accept`
+* 証拠不足 + 仮説価値あり → `needs_more_evidence`
+* 証拠薄い + 新規性低い + 飛躍強い → `reject`
+* 実務的には重要だが論文根拠が弱い → `downgrade_to_risk_note`
+
+この `downgrade_to_risk_note` を足すのが結構効きます。
+
+---
+
+# 4. confidence 校正ルール
+
+今は inferred に 0.85〜0.9 が付きやすいので、上限を決めた方が安定します。
+
+## 推奨上限
+
+* `source_fact + quoted` → 0.90〜0.98
+* `author_claim + quoted` → 0.75〜0.90
+* `system_inference + inferred_near` → 0.60〜0.82
+* `critique_hypothesis + inferred_speculative` → 0.35〜0.70
+
+### 追加ルール
+
+* counter evidence が強い場合は `-0.10 ~ -0.20`
+* direct limitation evidence がある場合は `+0.05`
+* support が 1件しかない批判仮説は `0.65` 上限
+
+---
+
+# 6. insights を必須化
+
+今の一番もったいない点です。
+
+## ルール
+
+`problem_candidates` が1件以上ある場合でも、
+**最低2〜4件の統合 insight を必ず生成**する。
+
+## insight の型
+
+```json
+{
+  "id": "ins_001",
+  "statement": "SkillNet is strongly supported as a benchmark-oriented skill infrastructure, but its real-world deployment claims remain broader than its empirical validation.",
+  "epistemic_mode": "system_inference",
+  "derivation_type": "summarized",
+  "confidence": 0.83,
+  "evidence_refs": ["ev_1", "ev_15", "ev_44", "ev_51"],
+  "parent_refs": ["nd_claim_1", "nd_limitation_1"]
+}
+```
+
+## この出力なら入れるべき insights
+
+1. **ベンチ環境での性能改善はかなり強い**
+2. **品質評価基盤も一定程度整っている**
+3. **ただし real-world deployment の根拠は実験より広い**
+4. **長期運用・汚染耐性・実務適用は今後の検証課題**
+
+---
+
+# 7. open_questions の改定
+
+今の `open_questions` は、
+problem 文の再掲になっていて弱いです。
+
+## 改定方針
+
+「何を確認すれば閉じるか」を明確にする。
+
+### 悪い例
+
+* 一般化ギャップを考慮していない。追加検証が必要。
+
+### 良い例
+
+* 実世界相当タスクで、ALFWorld/WebShop/ScienceWorld と同等の改善率が再現されるか
+* poisoned / low-quality skills 混入時に repository quality はどれだけ劣化するか
+* human review なしで self-constructed skills を何割まで安全に採用できるか
+
+## 追加フィールド
+
+```json
+{
+  "question_type": "validation_experiment",
+  "required_evidence_type": ["deployment_eval", "ablation", "human_audit"]
+}
+```
+
+---
+
+# 8. summary の改定
+
+`reasoning_summary.short_text` が弱いので、3段構成にします。
+
+```json
+"reasoning_summary": {
+  "headline": "SkillNet is strongly supported on benchmark performance, but some deployment-level claims exceed the empirical scope shown in the paper.",
+  "what_is_supported": [
+    "40% reward improvement and 30% step reduction are directly supported.",
+    "Evaluation framework and repository curation mechanisms are described."
+  ],
+  "what_remains_open": [
+    "Generalization beyond text-based simulated environments.",
+    "Long-term reliability of self-constructed skill repositories."
+  ],
+  "recommended_reading": "accept_core_results_with_scope_caution"
+}
+```
+
+---
+
+# 9. pb_001 / pb_002 / pb_003 の具体的改定
+
+## pb_001
+
+現状の中で一番生きています。
+ただし `problem_type` は `benchmark_transfer_risk` か `claim_scope_mismatch` の方が綺麗。
+
+### 改定例
+
+```json
+{
+  "id": "pb_001",
+  "statement": "SkillNet's benchmark gains are well supported, but the paper's deployment-level framing appears broader than the environments empirically evaluated.",
+  "epistemic_mode": "critique_hypothesis",
+  "derivation_type": "inferred_near",
+  "confidence": 0.74,
+  "problem_type": "claim_scope_mismatch",
+  "scope": "system",
+  "support_signals": [
+    "Experimental results are reported across three text-based simulated environments.",
+    "Some examples are explicitly described as illustrative prototypes rather than real-world applications."
+  ],
+  "counter_signals": [
+    "The paper reports consistent improvements across multiple benchmark environments."
+  ],
+  "decision": "needs_more_evidence"
+}
+```
+
+---
+
+## pb_002
+
+これは残してよいが、**今のままだと根拠が弱い**です。
+`evaluation_gap` より `repository_reliability_risk` の方が自然。
+
+### 改定例
+
+```json
+{
+  "id": "pb_002",
+  "statement": "SkillNet presents repository curation and evaluation mechanisms, but the long-term reliability of self-constructed and large-scale skill collections remains only partially resolved.",
+  "epistemic_mode": "critique_hypothesis",
+  "derivation_type": "inferred_near",
+  "confidence": 0.68,
+  "problem_type": "repository_reliability_risk",
+  "support_signals": [
+    "The paper states that the quality of self-constructed skills cannot be fully guaranteed.",
+    "Repository utility is explicitly tied to reliability."
+  ],
+  "counter_signals": [
+    "The paper introduces a filtering and consolidation pipeline and an automated evaluation framework."
+  ],
+  "decision": "needs_more_evidence"
+}
+```
+
+---
+
+## pb_003
+
+これは今の形だと**論文批判というより導入者目線の実務懸念**です。
+なので problem からは降ろして `risk_notes` に移すのを推奨します。
+
+### 改定例
+
+```json
+{
+  "id": "rk_003",
+  "node_type": "risk",
+  "statement": "For practical adoption, integration ownership, maintenance cost, and incident response would require explicit design beyond what the paper evaluates.",
+  "epistemic_mode": "system_inference",
+  "derivation_type": "inferred_speculative",
+  "confidence": 0.52,
+  "risk_type": "deployment_extrapolation",
+  "parent_refs": ["cl_unit_2603.04448v1_12_1", "cl_unit_2603.04448v1_13_1"],
+  "update_rule": "revise"
+}
+```
+
+---
+
+# 10. 出力トップレベルの改定案
+
+```json
+{
+  "run": {},
+  "nodes": [],
+  "problems": [],
+  "risk_notes": [],
+  "insights": [],
+  "open_questions": [],
+  "evidence_refs": [],
+  "confidence": 0.78,
+  "routing_plan": {},
+  "reasoning_summary": {}
+}
+```
+
+### 推奨トップレベル構成
+
+* `nodes`
+  claim / assumption / limitation / insight を統合
+* `problems`
+* `risk_notes`
+* `insights`
+* `open_questions`
+
+これで意味論がかなり明確になります。
+
+---
+
+# 11. 実装ルールの簡易版
+
+コードに落とすならこの順です。
+
+## Step 1
+
+引用文を `source_fact` / `author_claim` に分類
+
+## Step 2
+
+そこから `system_inference` を生成
+
+## Step 3
+
+`critique_hypothesis` を生成するが、
+**evidence sufficiency を満たさない場合は problem に昇格しない**
+
+## Step 4
+
+problem 化できなかった批判は `risk_notes` へ
+
+## Step 5
+
+最後に必ず `insights` を 2〜4件作る
+
+---
+
+# 12. 最小改修で済ませるなら
+
+全面改修が重いなら、まずこの4つだけでもかなり改善します。
+
+1. `epistemic_mode` に `author_claim` を追加
+2. `problem_candidates` に `evidence_sufficiency` を追加
+3. `pb_003` を `risk_note` に降格
+4. `insights` を必須生成
+
+---
+
+# 13. 推奨する最終出力の着地
+
+この論文に対する最終判定文は、だいたいこうなるのが理想です。
+
+> SkillNet は、ベンチマーク環境におけるスキル基盤としてはかなり有望であり、性能改善主張にも強い根拠がある。
+> 一方で、実世界展開や長期的リポジトリ信頼性に関する主張は、現時点の評価スコープより広く、慎重に読むべきである。
+
+この一文に向けて JSON を組み立てられると、出力品質がかなり上がります。
+
+必要なら次に、**この改定案をそのまま `output_schema_v2.json` 風にした完全版**を書きます。

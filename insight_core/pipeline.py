@@ -26,6 +26,7 @@ from insight_core.evaluator import evaluate_candidates_async
 from insight_core.extractor import extract_from_units_async
 from insight_core.llm_client import LLMClient
 from insight_core.request_normalizer import normalize_request
+from insight_core.result_formatter import build_agent_result
 from insight_core.response_builder import build_failure_response, build_response
 from insight_core.router import generate_routing_plan_async, load_routing_config, create_fallback_routing_plan, create_all_personas_routing_plan
 from insight_core.router.density_estimator import estimate_evidence_density
@@ -46,6 +47,7 @@ from insight_core.schemas import (
     RunStatus,
     SourceUnit,
 )
+from insight_core.summarizer import generate_japanese_summary_async
 from insight_core.unitizer import unitize_sources
 
 
@@ -473,6 +475,7 @@ async def run_pipeline_async(
                 llm,
                 domain,
                 normalized.constraints.max_problem_candidates,
+                personas=normalized.personas,
             )
             if verbose:
                 _log(f"  - Found {len(candidates)} candidates")
@@ -614,8 +617,38 @@ async def run_pipeline_async(
     elif verbose and status is not None:
         _log(f"Step 7: Consolidating results... skipped ({status.value} restored)")
 
+    # Step 8: Japanese Summary (optional)
+    japanese_summary = None
+    if normalized.options.include_japanese_summary and status is not None:
+        if verbose:
+            _log("Step 8: Generating Japanese summary...")
+        try:
+            japanese_summary = await generate_japanese_summary_async(
+                claims=claims,
+                assumptions=assumptions,
+                limitations=limitations,
+                problem_candidates=candidates,
+                insights=insights,
+                open_questions=open_questions,
+                confidence=confidence,
+                llm=llm,
+            )
+            if verbose:
+                _log(f"  - Overview: {japanese_summary.overview[:50]}...")
+        except Exception as e:
+            _log(f"  - FAILED: {e}")
+            failures.append(
+                _make_failure(
+                    failure_id=f"fl_{len(failures)+1:03d}",
+                    stage="summarization",
+                    reason=f"Japanese summary generation failed: {e}",
+                    suggested_next_action="要約処理を再試行してください",
+                )
+            )
+
     if verbose and status is not None:
-        _log("Step 8: Building response...")
+        step_num = 9 if normalized.options.include_japanese_summary else 8
+        _log(f"Step {step_num}: Building response...")
         _log(f"DONE! Status: {status.value}")
 
     return build_response(
@@ -633,6 +666,7 @@ async def run_pipeline_async(
         source_units=source_units if normalized.options.include_source_units else None,
         routing_plan=routing_plan,
         started_at=started_at,
+        japanese_summary=japanese_summary,
     )
 
 
@@ -645,6 +679,25 @@ def run_pipeline(
     return asyncio.run(run_pipeline_async(request, llm, verbose))
 
 
+async def run_pipeline_result_async(
+    request: InsightRequest,
+    llm: LLMClient | None = None,
+    verbose: bool = True,
+) -> dict[str, Any]:
+    """Run the pipeline and return the compact API/CLI result contract."""
+    response = await run_pipeline_async(request, llm, verbose)
+    return build_agent_result(request, response)
+
+
+def run_pipeline_result(
+    request: InsightRequest,
+    llm: LLMClient | None = None,
+    verbose: bool = True,
+) -> dict[str, Any]:
+    """Run the pipeline and return the compact API/CLI result contract."""
+    return asyncio.run(run_pipeline_result_async(request, llm, verbose))
+
+
 def run_insight(
     sources: list[dict],
     domain: str | None = None,
@@ -654,7 +707,7 @@ def run_insight(
     llm: LLMClient | None = None,
     verbose: bool = True,
 ) -> InsightResponse:
-    """Convenience function to run insight analysis."""
+    """Convenience function to run insight analysis and return the raw internal response."""
     from insight_core.schemas import Constraints, InsightRequest, Options, PersonaDefinition, Source
 
     source_objs = []
@@ -689,3 +742,50 @@ def run_insight(
     )
 
     return run_pipeline(request, llm, verbose)
+
+
+
+def run_insight_result(
+    sources: list[dict],
+    domain: str | None = None,
+    personas: list[dict] | None = None,
+    constraints: dict | None = None,
+    options: dict | None = None,
+    llm: LLMClient | None = None,
+    verbose: bool = True,
+) -> dict[str, Any]:
+    """Convenience function to run insight analysis and return the compact API/CLI result contract."""
+    from insight_core.schemas import Constraints, InsightRequest, Options, PersonaDefinition, Source
+
+    source_objs = []
+    for s in sources:
+        source_objs.append(
+            Source(
+                source_id=s.get("source_id", f"src_{len(source_objs)+1}"),
+                source_type=s.get("source_type", "text"),
+                title=s.get("title"),
+                content=s["content"],
+            )
+        )
+
+    persona_objs = None
+    if personas:
+        persona_objs = [PersonaDefinition(**p) for p in personas]
+
+    constraints_obj = Constraints(domain=domain)
+    if constraints:
+        constraints_obj = Constraints(**constraints)
+
+    options_obj = Options()
+    if options:
+        options_obj = Options(**options)
+
+    request = InsightRequest(
+        mode="insight",
+        sources=source_objs,
+        constraints=constraints_obj,
+        personas=persona_objs,
+        options=options_obj,
+    )
+
+    return run_pipeline_result(request, llm, verbose)

@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import asyncio
 
-from insight_core.llm_client import LLMClient
+from insight_core.llm_client import LLMClient, complete_json_async_compat, get_stage_max_tokens
 from insight_core.schemas import (
     Decision,
     PersonaDefinition,
     PersonaScore,
     ProblemCandidateItem,
 )
+
+
+EVALUATION_MAX_TOKENS = get_stage_max_tokens("evaluation")
 
 
 DEFAULT_AXES = [
@@ -50,6 +53,12 @@ def build_evaluation_prompt(
 
 ## あなたの特徴
 {persona.description or '専門的な評価を行う'}
+
+## このPersonaの執着
+{persona.obsession or '特に指定なし'}
+
+## このPersonaの盲点
+{persona.blind_spot or '特に指定なし'}
 
 ## 目標
 {persona.objective}
@@ -94,6 +103,8 @@ def build_evaluation_prompt(
 
 評価するときは次を守ってください:
 - Persona固有の問いに答える形で候補を点検する
+- obsession に刺さる兆候がある場合は因果や根拠の線が通るまで一段深掘りする
+- blind_spot に引っ張られそうな場合は、その偏りを自覚して別の根拠断片で補正する
 - 根拠要求を満たせない場合は `needs_more_evidence` を積極的に使う
 - トリガーがあっても、レッドフラグが強い場合は保留または棄却に寄せる
 - optional_notes に口調や守るべき振る舞いがある場合、それを守りつつ分析精度を優先する
@@ -219,7 +230,12 @@ async def _evaluate_for_persona(
 
     async def run_evaluation() -> PersonaScore:
         system_prompt, user_prompt = build_evaluation_prompt(candidate, persona)
-        response = await llm.complete_json_async(system_prompt, user_prompt)
+        response = await complete_json_async_compat(
+            llm,
+            system_prompt,
+            user_prompt,
+            max_tokens=EVALUATION_MAX_TOKENS,
+        )
         return parse_evaluation_response(response, persona, normalized_weight)
 
     try:
@@ -284,14 +300,17 @@ def compute_integrated_decision(
     if not scores:
         return Decision.RESERVE
 
-    critical_personas = {"data_researcher", "operator"}
+    critical_persona_axes = {
+        "data_researcher": {"evidence_grounding", "testability"},
+        "operator": {"feasibility", "maintainability"},
+        "detective": {"explanatory_power", "testability", "robustness"},
+    }
     for score in scores:
-        if score.persona_id in critical_personas and score.decision == Decision.REJECT:
+        critical_axes = critical_persona_axes.get(score.persona_id)
+        if critical_axes and score.decision == Decision.REJECT:
             axis_scores = score.axis_scores
-            if axis_scores:
-                critical_axes = ["evidence_grounding", "feasibility", "maintainability"]
-                if any(axis_scores.get(ax, 1.0) < 0.4 for ax in critical_axes):
-                    return Decision.REJECT
+            if axis_scores and any(axis_scores.get(ax, 1.0) < 0.4 for ax in critical_axes):
+                return Decision.REJECT
 
     if primary_persona_id:
         for score in scores:

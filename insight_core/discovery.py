@@ -14,14 +14,7 @@ from typing import Any
 NETWORK_ERROR_NAMES = {"APIConnectionError", "APITimeoutError", "ConnectError", "ReadTimeout", "TimeoutException"}
 
 
-def _should_use_fallback(exc: Exception) -> bool:
-    if exc.__class__.__name__ in NETWORK_ERROR_NAMES:
-        return True
-    message = str(exc).lower()
-    return "connection error" in message or "timed out" in message or "forbidden" in message
-
-
-from insight_core.llm_client import LLMClient
+from insight_core.llm_client import LLMClient, complete_json_async_compat, get_stage_max_tokens
 from insight_core.schemas import (
     AssumptionItem,
     ClaimItem,
@@ -29,6 +22,7 @@ from insight_core.schemas import (
     DerivationType,
     EpistemicMode,
     LimitationItem,
+    PersonaDefinition,
     ProblemCandidateItem,
     ProblemScope,
     ProblemType,
@@ -36,18 +30,67 @@ from insight_core.schemas import (
 )
 
 
+DISCOVERY_MAX_TOKENS = get_stage_max_tokens("discovery")
+
+
+def _should_use_fallback(exc: Exception) -> bool:
+    if exc.__class__.__name__ in NETWORK_ERROR_NAMES:
+        return True
+    message = str(exc).lower()
+    return (
+        "connection error" in message
+        or "timed out" in message
+        or "forbidden" in message
+        or "failed to parse json response" in message
+        or "unterminated string" in message
+    )
+
+
+def _format_short_list(items: list[str], limit: int = 3, fallback: str = "特になし") -> str:
+    if not items:
+        return fallback
+    return "; ".join(items[:limit])
+
+
+def _format_persona_probes(personas: list[PersonaDefinition] | None) -> str:
+    if not personas:
+        return "（なし）"
+
+    probes: list[str] = []
+    for persona in personas:
+        probes.append(
+            f"- {persona.persona_id}: obsession={persona.obsession or '未設定'} / "
+            f"blind_spot={persona.blind_spot or '未設定'} / "
+            f"key_questions={_format_short_list(persona.key_questions, 2)} / "
+            f"trigger_signals={_format_short_list(persona.trigger_signals, 2)} / "
+            f"red_flags={_format_short_list(persona.red_flags, 2)}"
+        )
+    return "\n".join(probes)
+
+
 def build_discovery_prompt(
     claims: list[ClaimItem],
     assumptions: list[AssumptionItem],
     limitations: list[LimitationItem],
     domain: str | None = None,
+    personas: list[PersonaDefinition] | None = None,
 ) -> tuple[str, str]:
     domain_context = f"\n対象領域: {domain}" if domain else ""
+    persona_context = _format_persona_probes(personas)
 
     system_prompt = f"""あなたは課題発見の専門家です。
 与えられた主張、前提、制約から、構造的な問題や課題候補を発見してください。
 
 **重要**: 課題候補は本文の言い換えではなく、破綻可能性または構造的欠落を表現してください。
+
+Persona探索レンズ:
+{persona_context}
+
+探索ルール:
+- 各Personaの obsession に一度は照らし、取りこぼしている論点がないか確認する
+- trigger_signals がある一方で red_flags も強い候補は、support_signals と failure_signals の両方に痕跡を残す
+- blind_spot が強く出そうな候補は、別の断片と突き合わせてから採用する
+- 同じ問題を複数Personaが別表現で示している場合は、重複を統合して太い候補にまとめる
 
 課題タイプ（problem_type）:
 - evaluation_gap: 評価が不足している
@@ -64,19 +107,26 @@ def build_discovery_prompt(
 - system: 全体的な設計や手法に関連
 - global: 領域全体や根本的な問題
 
+出力は簡潔にしてください:
+- problem_candidates は最大3件
+- 各 statement は1文で簡潔に書く
+- support_signals は最大2件、failure_signals は最大1件、fatal_risks は最大1件
+- 各 signal は短い句にして60文字以内にする
+- JSON以外の前置きや説明は一切書かない
+
 JSONフォーマットで出力してください：
 ```json
 {{
   "problem_candidates": [
     {{
-      "statement": "課題の記述（疑問形ではなく、問題状況を示す文で）",
+      "statement": "課題の記述（1文）",
       "problem_type": "evaluation_gap|data_gap|...",
       "scope": "local|system|global",
       "epistemic_mode": "hypothesis|interpretation",
       "confidence": 0.0-1.0,
-      "support_signals": ["この課題を支持する信号"],
-      "failure_signals": ["この課題が成立しない可能性を示す信号"],
-      "fatal_risks": ["致命的な反証条件"],
+      "support_signals": ["60文字以内の支持信号"],
+      "failure_signals": ["60文字以内の反証信号"],
+      "fatal_risks": ["60文字以内の致命的条件"],
       "related_claim_ids": ["関連するclaimのID"],
       "related_assumption_ids": ["関連するassumptionのID"],
       "related_limitation_ids": ["関連するlimitationのID"]
@@ -91,6 +141,9 @@ JSONフォーマットで出力してください：
 
     user_prompt = f"""以下の抽出結果から課題候補を発見してください。
 
+[Persona探索レンズ]
+{persona_context}
+
 [主張（Claims）]
 {claims_text}
 
@@ -101,8 +154,8 @@ JSONフォーマットで出力してください：
 {limitations_text}
 
 [出力]
-JSON形式で課題候補を出力してください。最大5件まで。
-本当に重要な構造的問題のみを抽出してください。"""
+JSON形式のみで課題候補を出力してください。最大3件まで。
+本当に重要な構造的問題のみを抽出してください。各 signal は短い句にしてください。"""
 
     return system_prompt, user_prompt
 
@@ -216,14 +269,26 @@ async def discover_problems_async(
     llm: LLMClient,
     domain: str | None = None,
     max_candidates: int = 5,
+    personas: list[PersonaDefinition] | None = None,
 ) -> list[ProblemCandidateItem]:
     if not claims and not assumptions and not limitations:
         return []
 
-    system_prompt, user_prompt = build_discovery_prompt(claims, assumptions, limitations, domain)
+    system_prompt, user_prompt = build_discovery_prompt(
+        claims,
+        assumptions,
+        limitations,
+        domain,
+        personas,
+    )
 
     try:
-        response = await llm.complete_json_async(system_prompt, user_prompt)
+        response = await complete_json_async_compat(
+            llm,
+            system_prompt,
+            user_prompt,
+            max_tokens=DISCOVERY_MAX_TOKENS,
+        )
     except Exception as exc:
         if not _should_use_fallback(exc):
             raise RuntimeError(f"Discovery failed: {exc}") from exc
@@ -240,5 +305,8 @@ def discover_problems(
     llm: LLMClient,
     domain: str | None = None,
     max_candidates: int = 5,
+    personas: list[PersonaDefinition] | None = None,
 ) -> list[ProblemCandidateItem]:
-    return asyncio.run(discover_problems_async(claims, assumptions, limitations, llm, domain, max_candidates))
+    return asyncio.run(
+        discover_problems_async(claims, assumptions, limitations, llm, domain, max_candidates, personas)
+    )

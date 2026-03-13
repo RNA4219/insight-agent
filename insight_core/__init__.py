@@ -5,6 +5,8 @@ structured insights including claims, assumptions, limitations,
 and problem candidates.
 """
 
+__version__ = "0.1.0"
+
 from insight_core.pipeline import (
     run_insight,
     run_insight_result,
@@ -45,6 +47,7 @@ from insight_core.schemas import (
 __all__ = [
     "run",
     "run_async",
+    "__version__",
     "run_pipeline",
     "run_pipeline_async",
     "run_pipeline_result",

@@ -237,6 +237,11 @@ python -m pytest -q
 python -m insight_core.cli run --help
 ```
 
+## リリース
+
+- changelog: [CHANGELOG.md](C:/Users/ryo-n/Codex_dev/insight-agent/CHANGELOG.md)
+- release note: [docs/releases/v0.1.0.md](C:/Users/ryo-n/Codex_dev/insight-agent/docs/releases/v0.1.0.md)
+
 ## ライセンス
 
 MIT License

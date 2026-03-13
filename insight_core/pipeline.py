@@ -698,6 +698,40 @@ def run_pipeline_result(
     return asyncio.run(run_pipeline_result_async(request, llm, verbose))
 
 
+def _build_request_for_wrapper(
+    sources: list[dict],
+    domain: str | None = None,
+    personas: list[dict] | None = None,
+    constraints: dict | None = None,
+    options: dict | None = None,
+) -> InsightRequest:
+    from insight_core.schemas import Constraints, InsightRequest, Options, PersonaDefinition, Source
+
+    source_objs = [
+        Source(
+            source_id=source.get("source_id", f"src_{index+1}"),
+            source_type=source.get("source_type", "text"),
+            title=source.get("title"),
+            content=source["content"],
+        )
+        for index, source in enumerate(sources)
+    ]
+    persona_objs = [PersonaDefinition(**persona) for persona in personas] if personas else None
+    constraints_obj = Constraints(domain=domain)
+    if constraints:
+        constraints_obj = Constraints(**constraints)
+    options_obj = Options()
+    if options:
+        options_obj = Options(**options)
+    return InsightRequest(
+        mode="insight",
+        sources=source_objs,
+        constraints=constraints_obj,
+        personas=persona_objs,
+        options=options_obj,
+    )
+
+
 def run_insight(
     sources: list[dict],
     domain: str | None = None,
@@ -707,41 +741,11 @@ def run_insight(
     llm: LLMClient | None = None,
     verbose: bool = True,
 ) -> InsightResponse:
-    """Convenience function to run insight analysis and return the raw internal response."""
-    from insight_core.schemas import Constraints, InsightRequest, Options, PersonaDefinition, Source
+    """Compatibility wrapper returning the raw internal response."""
+    from insight_core.runner import run
 
-    source_objs = []
-    for s in sources:
-        source_objs.append(
-            Source(
-                source_id=s.get("source_id", f"src_{len(source_objs)+1}"),
-                source_type=s.get("source_type", "text"),
-                title=s.get("title"),
-                content=s["content"],
-            )
-        )
-
-    persona_objs = None
-    if personas:
-        persona_objs = [PersonaDefinition(**p) for p in personas]
-
-    constraints_obj = Constraints(domain=domain)
-    if constraints:
-        constraints_obj = Constraints(**constraints)
-
-    options_obj = Options()
-    if options:
-        options_obj = Options(**options)
-
-    request = InsightRequest(
-        mode="insight",
-        sources=source_objs,
-        constraints=constraints_obj,
-        personas=persona_objs,
-        options=options_obj,
-    )
-
-    return run_pipeline(request, llm, verbose)
+    request = _build_request_for_wrapper(sources, domain, personas, constraints, options)
+    return run(request=request, output_format="raw", llm=llm, verbose=verbose)
 
 
 
@@ -754,38 +758,8 @@ def run_insight_result(
     llm: LLMClient | None = None,
     verbose: bool = True,
 ) -> dict[str, Any]:
-    """Convenience function to run insight analysis and return the compact API/CLI result contract."""
-    from insight_core.schemas import Constraints, InsightRequest, Options, PersonaDefinition, Source
+    """Convenience wrapper that now routes through the canonical run() API."""
+    from insight_core.runner import run
 
-    source_objs = []
-    for s in sources:
-        source_objs.append(
-            Source(
-                source_id=s.get("source_id", f"src_{len(source_objs)+1}"),
-                source_type=s.get("source_type", "text"),
-                title=s.get("title"),
-                content=s["content"],
-            )
-        )
-
-    persona_objs = None
-    if personas:
-        persona_objs = [PersonaDefinition(**p) for p in personas]
-
-    constraints_obj = Constraints(domain=domain)
-    if constraints:
-        constraints_obj = Constraints(**constraints)
-
-    options_obj = Options()
-    if options:
-        options_obj = Options(**options)
-
-    request = InsightRequest(
-        mode="insight",
-        sources=source_objs,
-        constraints=constraints_obj,
-        personas=persona_objs,
-        options=options_obj,
-    )
-
-    return run_pipeline_result(request, llm, verbose)
+    request = _build_request_for_wrapper(sources, domain, personas, constraints, options)
+    return run(request=request, output_format="result", llm=llm, verbose=verbose)

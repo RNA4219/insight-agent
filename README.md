@@ -1,388 +1,242 @@
 # Insight Agent
 
-論文・技術資料・設計資料などを読み取り、課題候補と高次の気づきを構造化して返す**課題発見専用コアエージェント**。
+論文・技術資料・設計資料を `InsightRequest` に正規化し、課題候補・洞察・未解決論点を `output_schema_v2` で返す課題発見エンジンです。CLI と Python API はどちらも同じ canonical runner `run()` を通ります。
 
-## 特徴
+## 何ができるか
 
 - 主張・前提・制約の抽出
-- ギャップ・矛盾・欠落の検出
-- Personaベースの多角的評価
-- Personaの obsession / blind spot を Discovery・Evaluator・Consolidator に反映
-- 構造化JSON出力
+- persona ベースの多角評価
+- problem / risk / insight / open question の構造化
+- PDF / JSON / text を同じ内部契約へ正規化
+- Config 駆動の provider / timeout / routing / output 制御
 
-## セットアップ
+## 最短導線
 
-### 1. 依存関係のインストール
+### インストール
 
 ```bash
 cd insight-agent
 pip install -e .
 ```
 
-### 2. 環境変数の設定
+### 環境変数
 
-`.env`ファイルをプロジェクトルートに作成：
+`.env` の最低限は次だけです。
 
 ```env
-# 単一プロバイダ
 LLM_PROVIDER=openrouter
-
-# 複数プロバイダ failover / round-robin
-# LLM_PROVIDER_SEQUENCE=openai,openrouter,alibaba
-# LLM_PROVIDER_SEQUENCE が設定されている場合は LLM_PROVIDER より優先されます
-
-# OpenAI使用時
-OPENAI_API_KEY=sk-xxx
-OPENAI_MODEL=gpt-5-mini-2025-08-07
-
-# OpenRouter使用時
 OPENROUTER_API_KEY=sk-or-xxx
-OPENROUTER_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-
-# Alibaba (DashScope) 使用時
-DASHSCOPE_API_KEY=sk-xxx
-ALIBABA_MODEL=glm-5
-ALIBABA_BASE_URL=https://coding-intl.dashscope.aliyuncs.com/v1
+OPENROUTER_API_MODEL=openrouter/hunter-alpha
+LLM_TIMEOUT_SECONDS=60
+LLM_MAX_RETRIES=2
+LLM_RETRY_BACKOFF_SECONDS=0.5
 ```
 
-`LLM_PROVIDER_SEQUENCE` を使うと、呼び出しごとに開始プロバイダをずらしつつ、失敗時は次のプロバイダへ順に切り替えます。単一プロバイダで同じモデルを連打して詰まるケースの緩和を狙った設定です。
+複数 provider を使う場合は `LLM_PROVIDER_SEQUENCE=openrouter,openai,alibaba` を使います。
 
-加えて、各 stage で出力トークン上限を個別に絞れます。たとえば extraction は短い JSON だけ返せばよいので `LLM_MAX_TOKENS_EXTRACTION=900` のように小さめに設定できます。使える環境変数は `LLM_MAX_TOKENS_ROUTING` / `EXTRACTION` / `DISCOVERY` / `EVALUATION` / `CONSOLIDATION` / `SUMMARY` です。
+### CLI
 
-長文入力で待ち時間が重い場合は、既定の `LLM_TIMEOUT_SECONDS=60` を起点に `LLM_TIMEOUT_SECONDS` または provider 個別の `OPENAI_TIMEOUT_SECONDS` / `OPENROUTER_TIMEOUT_SECONDS` / `ALIBABA_TIMEOUT_SECONDS` と、`LLM_MAX_RETRIES`, `LLM_RETRY_BACKOFF_SECONDS` で retry 挙動も調整できます。
+```bash
+python -m insight_core.cli run --pdf material/sample.pdf -o output.json
+python -m insight_core.cli run -i examples/sample_request.json
+python -m insight_core.cli run --text notes.txt --set llm.timeout_seconds=90
+python -m insight_core.cli run --pdf material/sample.pdf --config config/runtime.example.yaml
+```
 
-## 使い方
+後方互換のため `python -m insight_core.cli --pdf ...` も引き続き動きますが、公開入口は `run` です。
 
 ### Python API
 
-#### 簡易API
-
 ```python
-from insight_core import run_insight_result
-
-result = run_insight_result(
-    sources=[{
-        "source_id": "src_001",
-        "title": "Sample Paper",
-        "content": "..."
-    }],
-    domain="machine_learning"  # オプション
-)
-
-print(result.summary.reasoning)
-print(result.model_dump_json(indent=2))
-```
-
-#### 完全API
-
-```python
-from insight_core import run_pipeline_result, InsightRequest, Source, Constraints
+from insight_core import InsightRequest, RuntimeConfig, Source, run
 
 request = InsightRequest(
     mode="insight",
-    request_id="my_request_001",
+    request_id="req_demo_001",
     sources=[
         Source(
             source_id="src_001",
             source_type="text",
-            title="My Document",
-            content="解析したいテキスト..."
+            title="Demo",
+            content="解析したい本文...",
         )
     ],
-    constraints=Constraints(
-        domain="machine_learning",
-        max_problem_candidates=5,
-        max_insights=3
-    )
 )
 
-result = run_pipeline_result(request)
+config = RuntimeConfig.model_validate({
+    "llm": {
+        "provider_sequence": ["openrouter", "openai"],
+        "timeout_seconds": 60,
+    },
+    "pipeline": {
+        "limits": {
+            "max_problem_candidates": 5,
+            "max_insights": 3,
+        }
+    },
+    "output": {
+        "format": "result",
+    },
+})
+
+result = run(request=request, config=config)
 ```
 
-#### カスタムPersona
+`run(request_dict=payload, config_dict=cfg)` のような dict ベース呼び出しも使えます。既存の `run_pipeline_result()` / `run_insight_result()` は互換 wrapper です。
 
-```python
-from insight_core import run_pipeline_result, InsightRequest, Source, PersonaDefinition
+## 設計の芯
 
-custom_persona = PersonaDefinition(
-    persona_id="security_auditor",
-    name="Security Auditor",
-    role="セキュリティ専門家",
-    description="セキュリティリスクと脆弱性を重視",
-    objective="セキュリティ上の問題を特定する",
-    priorities=["robustness", "feasibility"],
-    penalties=["security_risk", "data_exposure"],
-    acceptance_rule="セキュリティリスクが許容範囲であること",
-    weight=1.5
-)
+### 1. 公開入口は 1 つ
 
-request = InsightRequest(
-    mode="insight",
-    sources=[Source(source_id="src_001", content="...")],
-    personas=[custom_persona]
-)
+- 正規 API: `run()`
+- CLI: `insight_core.cli run`
+- どちらも同じ pipeline を通る
 
-result = run_pipeline_result(request)
+### 2. 挙動変更は Config で行う
+
+- provider / provider sequence
+- timeout / retry
+- stage token limits
+- output format
+- routing / persona primary
+- pipeline limits
+
+### 3. 入力契約は `InsightRequest`
+
+外部入力が JSON / PDF / text でも、内部では常に `InsightRequest` に正規化されます。
+
+### 4. 既定出力は `output_schema_v2`
+
+`raw` はデバッグ用です。CLI / API の既定返却、README の例、比較対象は `output_schema_v2` に揃えています。
+
+## Config
+
+設定の優先順位は次のとおりです。
+
+1. デフォルト設定
+2. config file
+3. 環境変数
+4. CLI `--set` / API override
+5. request 内 `config_override`
+
+### 例
+
+```yaml
+llm:
+  provider_sequence:
+    - openrouter
+    - openai
+  timeout_seconds: 60
+  max_retries: 2
+  retry_backoff_seconds: 0.5
+
+pipeline:
+  routing:
+    enabled: true
+    primary_persona: bright_generalist
+    auto_select_personas: true
+  limits:
+    max_problem_candidates: 5
+    max_insights: 3
+    max_concurrency: 4
+
+output:
+  format: result
+  include_source_units: false
+  include_debug: false
+  include_intermediate_items: false
+
+runtime:
+  log_level: INFO
+  fail_fast: false
 ```
 
-### CLI
+`LLM_MAX_TOKENS_ROUTING` / `EXTRACTION` / `DISCOVERY` / `EVALUATION` / `CONSOLIDATION` / `SUMMARY` で stage 別 token cap も調整できます。
 
-CLI はデフォルトで `output_schema_v2` を返します。これは次段の生成AIが再調査・実験にそのまま進みやすいよう、`nodes / problems / risk_notes / insights / open_questions / reasoning_summary` を中心に薄くまとめた contract です。内部の詳細 schema が必要なときだけ `--output-format raw` を使います。
+## CLI の責務
 
-#### 基本実行
+CLI は薄い adapter に留めています。
+
+- 入力の受け取り
+- config file / env / `--set` のマージ
+- 実行中表示
+- 結果の保存または stdout 出力
+
+pipeline の細かい挙動は config で制御します。
+
+## 入力と loader
+
+### 対応入力
+
+- JSON: `-i input.json`
+- PDF: `--pdf paper.pdf`
+- text: `--text note.txt`
+
+PDF は抽出テキストを同じ場所に `.txt` キャッシュします。次回以降はキャッシュを再利用するため、リトライや比較実行が軽くなります。
+
+## 出力
+
+既定返却は `output_schema_v2` です。主要フィールドは次のとおりです。
+
+- `run`
+- `nodes`
+- `problems`
+- `risk_notes`
+- `insights`
+- `open_questions`
+- `evidence_refs`
+- `reasoning_summary`
+
+`raw` が必要なときだけ `--output-format raw` または `run(..., output_format="raw")` を使います。
+
+## Persona / Routing
+
+persona は config と routing で扱います。
+
+- 通常運用: 自動選択
+- 必要時: `pipeline.routing.primary_persona` で主担当を固定
+- 詳細確認: `raw` 出力の routing 情報を見る
+
+通常利用では persona を毎回手で指定しなくてよい構造にしています。
+
+## Skills
+
+この repo には LLM 作業者向けの repo-local skill を追加しています。
+
+- `skills/codex/SKILL.md`: Codex 向けの作業入口、推奨コマンド、確認観点
+- `skills/claude/SKILL.md`: Claude 向けの読み方、変更方針、検証手順
+
+どちらも「まず何を読むか」「どの入口を使うか」「何を壊しやすいか」を短くまとめた onboarding 用です。
+
+## ルート構成
+
+```text
+insight-agent/
+  config/           設定と persona / routing 定義
+  docs/src/         要件、設計メモ、schema
+  examples/         最小入力例と設定例
+  insight_core/     実装本体
+  material/         入力サンプルと PDF 抽出キャッシュ
+  artifacts/        実行結果、ベンチマーク、比較出力
+  scripts/manual/   手動確認用スクリプト
+  skills/           Claude / Codex 向け repo-local skill
+  tests/            自動テスト
+```
+
+## 開発メモ
+
+- 公開 API の本命は `run()`
+- `run_pipeline_result()` / `run_insight_result()` は互換 wrapper
+- 新しい入力形式を足すときは CLI ではなく loader 層へ追加する
+- 新しい出力形式を足すときは pipeline 本体ではなく formatter 側へ追加する
+
+## テスト
 
 ```bash
-python -m insight_core.cli -i input.json -o output.json
-```
-
-#### PDFを直接解析
-
-```bash
-python -m insight_core.cli --pdf material/sample.pdf -o output.json --domain machine_learning
-```
-
-PDF を直接解析した場合、抽出したテキストは `material/sample.txt` のように PDF と同じ場所へ保存されます。次回以降はその `.txt` を再利用するため、リトライや比較実行が軽くなります。
-
-#### ドメイン指定
-
-```bash
-python -m insight_core.cli -i input.json -o output.json --domain machine_learning
-```
-
-#### 内部 raw schema を出力する
-
-```bash
-python -m insight_core.cli -i input.json -o output.json --output-format raw
-```
-
-#### ソースユニットを含める
-
-```bash
-python -m insight_core.cli -i input.json -o output.json --output-format raw --include-source-units
-```
-
-## 入力フォーマット
-
-`input.json`:
-
-```json
-{
-  "mode": "insight",
-  "request_id": "example_001",
-  "sources": [
-    {
-      "source_id": "src_001",
-      "source_type": "text",
-      "title": "Sample Paper",
-      "content": "解析対象のテキスト..."
-    }
-  ],
-  "constraints": {
-    "domain": "machine_learning",
-    "max_problem_candidates": 5,
-    "max_insights": 3
-  },
-  "options": {
-    "include_source_units": false
-  }
-}
-```
-
-## 出力フォーマット
-
-デフォルトの API / CLI 返却は `output_schema_v2` です。
-
-```json
-{
-  "version": "output_schema_v2",
-  "run": {
-    "run_id": "run_xxx",
-    "request_id": "example_001",
-    "status": "partial"
-  },
-  "nodes": [
-    {
-      "id": "cl_001",
-      "node_type": "claim",
-      "statement": "SkillNet significantly enhances agent performance...",
-      "epistemic_mode": "source_fact",
-      "derivation_type": "quoted",
-      "confidence": 0.94,
-      "evidence_refs": ["ev_001"],
-      "source_scope": "core_result",
-      "update_rule": "retain"
-    }
-  ],
-  "problems": [
-    {
-      "id": "pb_001",
-      "statement": "SkillNet's benchmark gains are supported, but the deployment-level framing appears broader than the evaluated scope.",
-      "epistemic_mode": "critique_hypothesis",
-      "derivation_type": "inferred_near",
-      "confidence": 0.74,
-      "problem_type": "claim_scope_mismatch",
-      "support_bundle": {
-        "claim_ids": ["cl_001"],
-        "assumption_ids": ["as_001"],
-        "limitation_ids": ["lm_001"],
-        "evidence_ids": ["ev_001", "ev_015"]
-      },
-      "evidence_sufficiency": {
-        "status": "partial",
-        "missing": ["real_world_eval"],
-        "support_count": 2,
-        "counter_count": 1
-      },
-      "decision": "needs_more_evidence",
-      "next_checks": ["実世界相当タスクで再評価する", "主張の適用範囲を明文化する"]
-    }
-  ],
-  "risk_notes": [
-    {
-      "id": "rk_pb_003",
-      "statement": "実運用への外挿には責任分界と障害対応の追加設計が必要である。",
-      "risk_type": "deployment_extrapolation",
-      "next_checks": ["導入責任を定義する", "障害対応フローを設計する"]
-    }
-  ],
-  "insights": [
-    {
-      "id": "ins_v2_001",
-      "statement": "ベンチマーク上の性能改善は直接支持されている一方、主張の適用範囲は評価スコープより広い。",
-      "epistemic_mode": "system_inference",
-      "derivation_type": "summarized",
-      "confidence": 0.76
-    }
-  ],
-  "open_questions": [
-    {
-      "question_id": "oq_pb_001",
-      "question_type": "validation_experiment",
-      "statement": "実世界相当タスクで、ベンチマークと同等の改善率が再現されるか",
-      "required_evidence_type": ["deployment_eval", "transfer_benchmark", "ablation"]
-    }
-  ],
-  "evidence_refs": [
-    {
-      "evidence_id": "ev_001",
-      "evidence_role": ["main_support", "evaluation_setup"],
-      "strength": 0.94
-    }
-  ],
-  "confidence": 0.78,
-  "routing_plan": {},
-  "reasoning_summary": {
-    "headline": "ベンチマーク上の強い結果は支持されるが、主張の適用範囲には留保が必要。",
-    "what_is_supported": ["40% reward improvement is directly supported."],
-    "what_remains_open": ["Generalization beyond text-based simulated environments."],
-    "recommended_reading": "accept_core_results_with_scope_caution"
-  }
-}
-```
-
-内部の詳細 schema が必要な場合は `run_pipeline()` / `run_insight()` または CLI の `--output-format raw` を使います。
-
-## サンプルコマンド
-
-### クイックスタート
-
-```bash
-# サンプル入力で実行
-python -m insight_core.cli -i examples/sample_request.json
-
-# 出力をファイルに保存
-python -m insight_core.cli -i examples/sample_request.json -o results.json
-
-# Pythonで直接実行
-python -c "
-from insight_core import run_insight_result
-result = run_insight_result(
-    sources=[{'source_id': 'test', 'content': 'Your text here...'}],
-    domain='general'
-)
-print(result.model_dump_json(indent=2))
-"
-```
-
-### テスト実行
-
-```bash
-# 全テスト実行
-pytest tests/ -v
-
-# 特定のテストのみ
-pytest tests/test_insight_agent.py::TestSchemas -v
-```
-
-## 標準Persona
-
-デフォルトで8種類のPersonaが適用されます。`default_personas.v4` では、各Personaに以下のような詳細設定が入っています。
-
-- `obsession`: そのPersonaが反応しやすい執着点
-- `blind_spot`: そのPersonaが軽視しやすい盲点
-- `key_questions`: そのPersonaが最初に確認する問い
-- `evidence_requirements`: 判断に必要とする根拠
-- `trigger_signals`: 前のめりになる兆候
-- `red_flags`: 却下や保留に寄せる兆候
-- `optional_notes`: 口調・安全ガード・判断姿勢の補助メモ
-- `synthesis_style`: 最終コメントのまとめ癖
-
-| Persona ID | 役割 | 重視点 |
-|------------|------|--------|
-| `bright_generalist` | 多面探索者 | 波及効果、トレードオフ整理 |
-| `data_researcher` | 検証主義者 | 根拠、反証可能性 |
-| `curiosity_entertainer` | 話題化演出家 | 新規性、伝播力 |
-| `researcher` | 研究設計者 | 仮説、説明力 |
-| `operator` | 現場番人 | 導入性、保守性 |
-| `strategist` | 構造戦略家 | 長期波及、構造因 |
-| `moon_gazer` | 監督AI視点 | 論点圧縮、境界管理、破綻検知 |
-| `detective` | 矛盾追跡者 | 因果追跡、競合仮説、再検証 |
-
-## アーキテクチャ
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      InsightRequest                          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1. Request Normalizer (正規化・検証)                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. Unitizer (ソース分割)                                    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. Extractor (Claim/Assumption/Limitation抽出)             │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. Discovery (課題候補発見)                                 │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. Evaluator (Persona評価)                                  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. Consolidator (Insight/OpenQuestion統合)                  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      InsightResponse                         │
-└─────────────────────────────────────────────────────────────┘
+python -m pytest -q
+python -m insight_core.cli run --help
 ```
 
 ## ライセンス
 
 MIT License
-

@@ -1,0 +1,28 @@
+llm:
+  provider_sequence:
+    - openrouter
+    - openai
+  timeout_seconds: 60
+  max_retries: 2
+  retry_backoff_seconds: 0.5
+
+pipeline:
+  routing:
+    enabled: true
+    primary_persona: bright_generalist
+    auto_select_personas: true
+  limits:
+    max_problem_candidates: 5
+    max_insights: 3
+    max_concurrency: 4
+
+output:
+  format: result
+  include_source_units: false
+  include_debug: false
+  include_intermediate_items: false
+  include_japanese_summary: false
+
+runtime:
+  log_level: INFO
+  fail_fast: false

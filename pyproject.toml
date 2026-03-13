@@ -9,6 +9,7 @@ dependencies = [
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
     "pymupdf>=1.26.0",
+    "PyYAML>=6.0.0",
 ]
 
 [project.optional-dependencies]

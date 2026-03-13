@@ -14,6 +14,8 @@ from insight_core.pipeline import (
     run_pipeline_result_async,
 )
 from insight_core.result_formatter import build_agent_result
+from insight_core.runner import run, run_async
+from insight_core.runtime_config import RuntimeConfig, load_runtime_config
 from insight_core.schemas import (
     AssumptionItem,
     ClaimItem,
@@ -41,6 +43,8 @@ from insight_core.schemas import (
 )
 
 __all__ = [
+    "run",
+    "run_async",
     "run_pipeline",
     "run_pipeline_async",
     "run_pipeline_result",
@@ -48,6 +52,8 @@ __all__ = [
     "run_insight",
     "run_insight_result",
     "build_agent_result",
+    "RuntimeConfig",
+    "load_runtime_config",
     "InsightRequest",
     "InsightResponse",
     "NormalizedRequest",
